@@ -1,0 +1,642 @@
+/* Branch chip row inside the composer tool row (conversation.input.left,
+ * right of the mode chips). A single chip button: the branch picker (the
+ * worktree toggle that used to share this dock is gone — worktree actions
+ * live in the branch menu's right-click).
+ *
+ * Geometry mirrors the composer trigger chips in the DSH base (see
+ * PermissionSelect / ModelSelect): 28px height, 13/20 medium-secondary
+ * label, transparent fill, no outline — the dock stays at the same
+ * visual weight as the surrounding chips (dsh-worktree select, standard
+ * mode select, Workspace Write, MiniMax-M3 High). The corners stop short
+ * of the base's full pill (24px) so the silhouette stays a chip rather
+ * than a capsule, per the design brief. */
+
+/* Shared trigger geometry — copied 1:1 from the base composer triggers
+ * (PermissionSelect .trigger / ModelSelect .trigger). */
+.dock {
+  display: inline-flex;
+  align-items: stretch;
+  height: 28px;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary, #81858c);
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 500;
+  min-height: 28px;
+  overflow: hidden;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 100%;
+  padding: 0 8px 0 8px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.chip:hover {
+  background: var(--dsw-alias-interactive-bg-hover, color-mix(in srgb, currentColor 8%, transparent));
+}
+
+.branch {
+  max-width: 16em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Confirm flyout: the second-level panel opening right of the branch
+ * card (the base Menu's submenu posture: r20, elevation-prominent
+ * hairline, --dsw-specific-menu with --dsw-menu-backdrop-filter — host 0.1.2 Menu card;
+ * hosts without the token fall back to the old r12-era shadow-lv3). Width is content-driven — it follows
+ * the longest line (for remote picks that is the subject line's branch
+ * name) — floored at 168px (the Cancel/Confirm pair plus padding: short
+ * branch names must not squeeze the buttons into wrapping "切换中…"
+ * mid-word) and capped at 400px; BranchMenu also clamps it inline to the
+ * room right of the card. Beyond the cap the lines wrap. border-box so
+ * every width arm includes the card chrome. */
+.popCard {
+  box-sizing: border-box;
+  position: fixed;
+  z-index: 1000;
+  width: max-content;
+  min-width: 168px;
+  max-width: min(400px, 80vw);
+  padding: 4px;
+  border: 0;
+  border-radius: 20px;
+  background: var(--dsw-specific-menu, var(--dsw-alias-surface-raised, #ffffff));
+  backdrop-filter: var(--dsw-menu-backdrop-filter);
+  --dsw-elevation-stroke-color: var(--dsw-alias-border-l1);
+  /* Elevation-prominent carries the hairline stroke; the lv3 fallback
+   * keeps a shadow where the token does not exist. */
+  box-shadow: var(--dsw-elevation-prominent, var(--dsw-shadow-lv3));
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.popAsk {
+  margin: 0;
+  padding: 6px 8px;
+  font-size: 13px;
+  line-height: 20px;
+  color: inherit;
+  /* Branch names are long unbroken tokens — plain wrapping would let them
+   * overflow the capped card instead of breaking. */
+  overflow-wrap: anywhere;
+}
+
+/* Remote confirm's name line: the branch itself, weight 500 like the leaf
+ * rows — the subject the ask line refers to ("该远程分支"). A dedicated
+ * line keeps the long unbroken token away from the sentence, so wraps
+ * happen inside the name instead of shredding the Chinese around it. */
+.popSubject {
+  margin: 0;
+  padding: 0 8px 2px;
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 500;
+  color: inherit;
+  overflow-wrap: anywhere;
+}
+
+/* The removal confirm's consequence lines (dirty/ahead/archived sessions):
+ * subdued one-row facts under the ask, the dirty count alone in the warning
+ * tone — mirroring the manager dialog's fact block. */
+.popDetails {
+  padding: 0 8px 2px;
+}
+
+.popDetail {
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary, rgba(128, 128, 128, 0.9));
+  overflow-wrap: anywhere;
+}
+
+.popDetailWarn {
+  color: var(--dsw-alias-status-danger, #d5304f);
+}
+
+.popActions {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+}
+
+/* Menu-row-like buttons: transparent fill, hover tint, same 13px type.
+ * nowrap keeps labels like 切换中… from splitting mid-word when the flyout
+ * is pinned to its minimum width by a short branch name. */
+.popActions button {
+  flex: 1 1 0;
+  height: 28px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.popActions button:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.popActions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.popActions button:last-child {
+  color: var(--dsw-alias-label-primary-bluish, #4186f0);
+  font-weight: 500;
+}
+
+/* ── Branch picker popup (BranchMenu) ──────────────────────────────
+ * Upward-opening card pinned above the chip, in the Menu's card chrome
+ * (r20, elevation-prominent hairline, --dsw-specific-menu with
+ * --dsw-menu-backdrop-filter — host Menu/PermissionSelect card;
+ * hosts without the token fall back to shadow-lv3). Three owner requirements shape the geometry:
+ *
+ *   1. height cap: min(420px, 60vh) on the card, only the rows area
+ *      scrolls (.menuRows) — heading and search stay pinned;
+ *   2. the search field sits pinned at the card's bottom edge, directly
+ *      above the chip, with the scrolling rows above it;
+ *   3. the card is CSS-`bottom`-pinned ~6px above the chip's top and so
+ *      grows entirely upward — it can never cover the composer or fill
+ *      the viewport, whatever the branch count.
+ *
+ * The inline `left`/`bottom` come from BranchMenu's placement pass; the
+ * width is fixed here (design 360px — 320 tree + 40 tool strip — and
+ * viewport-capped) so horizontal clamping stays deterministic without
+ * measuring the card. */
+
+/* The portal lands directly under document.body, outside the shell's
+ * box-sizing reset — content-box default would add padding/border on top
+ * of the declared width (360 became 370, and the width:100% children
+ * padded 16px past the card's right clip, shearing off their rounded
+ * corners). Every width-declared box in this popup opts back into
+ * border-box: the card, the toolbar, the rows, and the search input. */
+.menuCard {
+  box-sizing: border-box;
+  position: fixed;
+  z-index: 1000;
+  display: flex;
+  flex-direction: row;
+  width: min(360px, calc(100vw - 24px));
+  max-height: min(420px, 60vh);
+  overflow: hidden;
+  padding: 4px;
+  border: 0;
+  border-radius: 20px;
+  background: var(--dsw-specific-menu, var(--dsw-alias-surface-raised, #ffffff));
+  backdrop-filter: var(--dsw-menu-backdrop-filter);
+  --dsw-elevation-stroke-color: var(--dsw-alias-border-l1);
+  /* Same elevation card as .popCard (host 0.1.2 Menu); lv3 fallback
+   * for hosts without the token. */
+  box-shadow: var(--dsw-elevation-prominent, var(--dsw-shadow-lv3));
+  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
+  --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
+}
+
+/* Left tool strip (IDEA branch-panel posture at popup scale): a narrow
+ * column of icon-only buttons for actions that do not belong in the tree
+ * — locate the checked-out branch, expand/collapse the whole tree.
+ * Buttons stack from the BOTTOM up: the card's height shrinks when the
+ * repo has few branches, so a top-anchored strip would drift around and
+ * the buttons would sit far from the search bar; anchoring to the bottom
+ * pins them at a stable spot (beside the search row) whatever the height. */
+.menuToolbar {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 2px;
+  flex-shrink: 0;
+  width: 32px;
+  padding: 0 2px;
+  margin-right: 4px;
+  border-right: 0.5px solid color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.menuToolButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin: 0 auto;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.menuToolButton:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover, color-mix(in srgb, currentColor 8%, transparent));
+}
+
+.menuToolButton:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* The sync tools while their action runs: a soft opacity pulse. The glyph
+ * is a directional arrow, so the circular-refresh spin read as garbled
+ * rotation — pulsing keeps the arrow legible while clearly "live", and the
+ * button keeps full opacity (the usual disabled dim would read as broken
+ * for an in-flight network operation). */
+.menuToolButtonRunning svg {
+  animation: menuToolPulse 700ms ease-in-out infinite alternate;
+}
+
+.menuToolButtonRunning:disabled {
+  opacity: 1;
+  cursor: progress;
+}
+
+@keyframes menuToolPulse {
+  from { opacity: 1; }
+  to { opacity: 0.25; }
+}
+
+/* The main column: heading + scrollable rows + pinned search. */
+.menuMain {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Non-interactive group heading — the Menu label row's posture. */
+.menuHeading {
+  padding: 6px 8px 4px;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-secondary, #81858c);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 0;
+}
+
+/* The only scrollable region: shrinks within the capped card so the
+ * heading above and the search below stay visible while rows scroll. */
+.menuRows {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* Menu-row-like buttons: transparent fill, hover tint, same 13px type.
+ * Weight 500 mirrors the chip's branch label (the portal escapes the
+ * composer's font context, so the match must be explicit — the inherited
+ * body weight is 400 and reads visibly lighter than the chip beside it). */
+.menuRow {
+  box-sizing: border-box; /* width:100% + padding must stay inside .menuRows */
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 28px;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.menuRow:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover, color-mix(in srgb, currentColor 8%, transparent));
+}
+
+/* The checked-out branch: a persistent tint a step above the resting rows
+ * so it reads as "you are here" the moment the list scrolls it into view
+ * (BranchMenu centers it on open) — the trailing check alone is easy to
+ * miss from a distance. */
+.menuRowSelected,
+.menuRowSelected:hover:not(:disabled) {
+  background: color-mix(in srgb, currentColor 10%, transparent);
+}
+
+/* IDEA-style selection: the clicked row gets a bluish fill, layering over
+ * the HEAD tint when the same row is both — selection communicates intent,
+ * the HEAD tint communicates position, and they coexist (IDEA 4.4). */
+.menuRowPicked,
+.menuRowPicked:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--dsw-alias-label-primary-bluish, #4186f0) 18%, transparent);
+}
+
+.menuRowLabel {
+  flex: 1 1 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Upstream divergence arrows (↑N/↓N) trailing a local branch row, before
+ * the HEAD check: the count badge tone at a smaller size so a busy list
+ * still reads the name first. Plain text arrows — no base-set icon pairs
+ * a direction with a count. tabular-nums keeps ↑10 from nudging neighbors
+ * as the digits tick. */
+.menuRowArrow {
+  flex-shrink: 0;
+  font-size: 11px;
+  line-height: 20px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, currentColor 55%, transparent);
+}
+
+/* Search hit highlight (IDEA): the matched substring gets a warm tint
+ * behind it — theme-agnostic, legible in both light and dark cards. */
+.menuSearchMark {
+  background: color-mix(in srgb, #b58900 38%, transparent);
+  border-radius: 2px;
+}
+
+/* Tree group rows (folder headers) — BranchMenu's '/' prefix tree: the
+ * same row geometry as .menuRow, but labeled in the secondary tone so the
+ * leaf rows pop, with a count badge and a chevron that turns on expand. */
+.menuGroup {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 28px;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary, #81858c);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.menuGroup:hover {
+  background: var(--dsw-alias-interactive-bg-hover, color-mix(in srgb, currentColor 8%, transparent));
+}
+
+/* The two top-level section headers (local/remote branches) step ABOVE the
+ * folder headers they contain: primary label tone like the leaf rows plus
+ * a heavier weight, so the nav hierarchy reads group > row > folder — the
+ * folder headers keep the secondary tone that alone would leave the
+ * sections as the faintest (and most important) rows on the list. */
+.menuGroupTop {
+  color: inherit;
+  font-weight: 600;
+}
+
+.menuGroupLabel {
+  flex: 1 1 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.menuGroupChevron {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  transition: transform 120ms ease;
+}
+
+.menuGroupChevronOpen {
+  transform: rotate(90deg);
+}
+
+.menuGroupCount {
+  flex-shrink: 0;
+  font-size: 12px;
+  line-height: 20px;
+  font-weight: 400;
+  color: color-mix(in srgb, currentColor 55%, transparent);
+}
+
+/* Zero-search-hit state: centered secondary line inside the rows area. */
+.menuEmpty {
+  padding: 10px 8px;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-secondary, #81858c);
+  text-align: center;
+}
+
+/* Bottom-pinned search field, separated from the rows by a hairline.
+ * Borderless so it reads as part of the card, focus shown as the
+ * standard hover tint rather than an outline. */
+.menuSearchWrap {
+  flex-shrink: 0;
+  margin-top: 2px;
+  padding-top: 4px;
+  border-top: 0.5px solid color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.menuSearch {
+  box-sizing: border-box; /* width:100% + padding must stay inside the wrap */
+  width: 100%;
+  height: 30px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  /* Weight 500 mirrors the chip's branch label (see .menuRow) — the portal
+   * escapes the composer's font context and would inherit body's 400. */
+  font-weight: 500;
+  line-height: 20px;
+}
+
+.menuSearch::placeholder {
+  color: var(--dsw-alias-label-secondary, #81858c);
+}
+
+.menuSearch:focus {
+  outline: none;
+  background: var(--dsw-alias-interactive-bg-hover, color-mix(in srgb, currentColor 8%, transparent));
+}
+
+/* ── Create/rename flyouts (BranchMenu row context menu) ────────────
+ * Open IN PLACE of the row menu (at its point, clamped) and hold the whole
+ * flow in one panel: ask line, input, live hint, and the Cancel/confirm
+ * pair — typing the name and pressing the button fires in one stroke, no
+ * second confirm step. */
+
+/* The naming input inside the flyout: borderless, part of the card, focus
+ * shown as the standard hover tint. Fixed width — the popCard is
+ * max-content, so a percentage width would chase the input's own default
+ * size instead of the design width. */
+.menuCreate {
+  box-sizing: border-box;
+  width: 248px;
+  height: 30px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  /* Weight 500 mirrors the chip's branch label (see .menuSearch). */
+  font-weight: 500;
+  line-height: 20px;
+}
+
+.menuCreate::placeholder {
+  color: var(--dsw-alias-label-secondary, #81858c);
+}
+
+.menuCreate:focus {
+  outline: none;
+  background: var(--dsw-alias-interactive-bg-hover, color-mix(in srgb, currentColor 8%, transparent));
+}
+
+.menuCreate:disabled {
+  opacity: 0.5;
+}
+
+/* The error line under the input — only rendered while the draft is
+ * unacceptable with a non-empty reason; the input itself stays neutral,
+ * the line carries the state. */
+.menuCreateHintBad {
+  margin: 0;
+  padding: 0 8px;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-error);
+}
+
+/* ── Row context menu (BranchMenu right-click) ─────────────────────
+ * Cursor-anchored transient over the branch card: translucent menu chrome
+ * (--dsw-specific-menu with --dsw-menu-backdrop-filter, elevation-prominent hairline,
+ * lv3 fallback) at a smaller radius — r20 would round a launcher this
+ * short into a pill, r12 keeps the corners proportionate to a handful of
+ * rows (two on a worktree row, up to six plus a header on a branch row).
+ * Width hugs the widest item
+ * (shrink-to-fit, no design width) with a generous cap for safety —
+ * a launcher reads better snug than stretched. Positioned once at open
+ * and dismissed rather than re-placed when the page moves (see
+ * BranchMenu's ctx placement pass); z-index one step above the popCard so
+ * it never slides under the confirm flyout. */
+.ctxCard {
+  box-sizing: border-box;
+  position: fixed;
+  z-index: 1001;
+  width: max-content;
+  max-width: 280px;
+  padding: 4px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--dsw-specific-menu, var(--dsw-alias-surface-raised, #ffffff));
+  backdrop-filter: var(--dsw-menu-backdrop-filter);
+  --dsw-elevation-stroke-color: var(--dsw-alias-border-l1);
+  box-shadow: var(--dsw-elevation-prominent, var(--dsw-shadow-lv3));
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* The target row's name, above the verbs. Unlike the items this one holds
+ * a branch name, so it is the one line allowed to hit the 280px cap and
+ * ellipsize (the full name rides in a title). Secondary tone and no hover
+ * affordance: it is a label, not a seventh item. */
+.ctxHeader {
+  padding: 4px 8px 2px;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-secondary);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* Menu-item rows: the .menuRow geometry at a hair lighter weight — a
+ * launcher's labels read as commands, not data. nowrap: the labels are
+ * fixed copy (no branch names), the 280px cap is unreachable by design. */
+.ctxItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 28px;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.ctxItem:hover,
+.ctxItem:focus-visible {
+  background: var(--dsw-alias-interactive-bg-hover, color-mix(in srgb, currentColor 8%, transparent));
+}
+
+/* The running-session withhold (worktree removal): a disabled item stays
+ * visible — the reason it is missing lives on its hover title, and a verb
+ * that appears and disappears with session state reads as a bug, not a
+ * rule. No hover tint, no pointer; the label dims instead of vanishing. */
+.ctxItem:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.ctxItem:disabled:hover {
+  background: transparent;
+}
+
+/* The arrow-key walk lands here, so the focused item must read as strongly
+ * as a hovered one — the tint above carries it, the default ring would sit
+ * outside the 8px radius. */
+.ctxItem:focus-visible {
+  outline: none;
+}
+
+/* Leading glyph rides the label tone, a step quieter. */
+.ctxItem svg {
+  flex-shrink: 0;
+  opacity: 0.75;
+}
+
+.ctxItemLabel {
+  flex: 1 1 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

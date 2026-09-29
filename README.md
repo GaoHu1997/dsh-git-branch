@@ -1,0 +1,101 @@
+# dsh-git-branch
+
+[![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
+
+![dsh-git-branch in the Web UI](docs/images/gitworktree.png)
+
+[简体中文](./README.zh.md) | English
+
+A dsh plugin for simple branch & worktree management in the Web UI. The composer tool row shows the current branch: pick another to switch in place, or flip the **Worktree** toggle to get an isolated worktree as a real workspace — as shown in the screenshot above.
+
+[dsh]: https://github.com/cordiverse/dsh
+
+Repo: <https://github.com/GaoHu1997/dsh-git-branch>
+
+> [!IMPORTANT]
+> **GitHub direct installs have ended** — the repository no longer carries prebuilt output. Install from npm instead:
+>
+> ```sh
+> dsh plugin --profile web add @gaohu9712/dsh-git-branch
+> ```
+>
+> **Upgrading from a legacy `github:` install (≤ 0.3.2, package name `dsh-git-branch`)?** An in-place `update` fails to load — remove the old name first, then add again. Worktree folders and the plugin's settings carry over untouched.
+
+## Features
+
+- **IDEA-style branch picker**: the branch menu treats `/` as a folder hierarchy — collapsible folders, last-segment labels, the checked-out branch's chain opens centered. Local and remote branches render as two collapsible groups (a single remote strips its prefix), with bottom search (ancestor folders kept, hits highlighted), locate-current-branch and expand/collapse tools, and ↑N/↓N divergence marks on tracking branches.
+- **Remote branch checkout**: pick `origin/feat-x` in the remote group and it checks out in place with a tracking branch directly (no confirmation); the worktree toggle sends the pick to an isolated worktree instead.
+- **Row context menu**: right-click a branch row for six verbs — check out (immediate, no confirmation), new branch, new branch and check out, rename branch (local rows), delete branch (local rows, the safe `-d`: git refuses unmerged commits and occupied branches), copy branch; a worktree row offers go-to-worktree, copy path, and remove worktree. Second-level dialogs open IN PLACE of the menu; in-place actions keep the menu open, so rows can be acted on in a run. Keyboard: arrow keys + Enter.
+- **Worktree quick hop**: the main checkout's blank-session menu groups branches held by live worktrees under **Worktrees** (hover shows the directory) — the row menu's "Go to this worktree" hops straight into that directory and starts a fresh session.
+- **Branch switching**: pick a branch — an in-place switch, no confirmation. Inside a linked worktree the entry scopes down: other branches stay listed but dimmed, with a hint to act from the main checkout; a started session's menu shows only its own branch (fetch and update still work).
+- **Create from any branch, rename in place**: right-clicking any branch row creates FROM that branch (checkouts untouched) or creates-and-checks-out (checked out on the spot); the create flyout validates as you type (git ref rules plus a duplicate check) and fires in one stroke, a failure keeping it open for a renamed retry. Local rows rename in place too.
+- **Remote sync**: the last toolbar tool fetches every remote and prunes stale tracking branches — the list refreshes in place, no terminal round-trip.
+- **Branch update**: update the CURRENT branch to its upstream (fast-forward only); divergence, a missing upstream, or conflicting uncommitted changes are refused with git's own explanation — the plugin never stashes or rewrites history on your behalf.
+- **Branch push**: push the CURRENT branch to its upstream from the toolbar — no terminal round-trip. A missing upstream or a diverged remote is refused with git's own message; `--force` is never passed, so remote commits are never lost. A linked-worktree session pushes the branch its own worktree holds.
+- **Worktree isolation**: in a session that has not started, right-clicking any branch row offers **Create worktree** (reuse or fresh directory) or **New branch and worktree** (cut a new branch off that row, name typed by hand); confirming isolates into `<repo>/.dsh/gitworktree/<branch>/` inside the repository (locally ignored through `.git/info/exclude` — the repo's `git status` stays clean) and registers a real workspace, with same-branch re-creates reusing the existing worktree wherever it lives. Once the session starts the directory is fixed — the worktree verbs hide along with the Worktrees group.
+- **Worktree removal**: the **Worktrees** group's row menu (and the manager dialog) offers **Remove worktree** — the confirm first counts uncommitted files (red) and ahead commits, and warns the workspace's sessions will be archived; confirming removes the git worktree (the branch itself survives), then archives the sessions and drops the workspace registration. A git failure leaves the DSH side untouched and retries in place. A directory with a running session withholds the verb.
+- **Worktree manager**: the plugin's configuration page on **Settings → Plugins** opens a dialog listing every worktree across both storage locations — the per-repository `.dsh/gitworktree` layouts (new) and the legacy central root (old, kept for existing worktrees) — grouped by repository with a source badge, orphan directories included.
+- **Legacy storage, read-only**: the same page shows the historical central storage root (`~/.dsh/gitworktree` by default) read-only — existing worktrees stay put and keep working; new ones are created inside their repository. A legacy `~/.dsh/gitworktree/settings.json` value migrates automatically on upgrade.
+
+> [!NOTE]
+> - The native sidebar is untouched: worktrees are ordinary registered workspaces, and the workspace tree nests the per-repository layouts under their repository automatically (existing centrally-stored worktrees keep their old location — only new ones nest).
+> - `git clean -xdff` (double `-f`) deletes the in-repository worktree directories (a single `-f` skips nested repositories). `git worktree prune` restores the registrations afterwards, but uncommitted work inside them is lost.
+> - If every workspace of a repository is deregistered, its worktrees no longer appear in the manager (or the auto-prune); re-register any directory of that repository to bring them back.
+
+## Install
+
+```sh
+dsh plugin --profile web add @gaohu9712/dsh-git-branch
+```
+
+> The package declares `dsh.bundle`, so `add` wires the plugin into the profile's layer stack automatically — no config editing needed. Requires the `web` profile (`dsh web`) and a dsh **0.1.7-rc.1** (or later) host.
+
+Running a dsh **0.1.2 alpha** host? Install the dedicated compatibility build instead:
+
+```sh
+dsh plugin --profile web add @gaohu9712/dsh-git-branch@dsh-alpha
+```
+
+> `@dsh-alpha` is a dist-tag resolving to the latest alpha-host compatibility build (currently `0.4.3-dsh-0.1.2-alpha.5`) with peers pinned to the alpha line — a plain `update` never mixes the two channels. On 0.1.7-rc.1 or later, use the default line above.
+
+## Update
+
+```sh
+dsh plugin --profile web update @gaohu9712/dsh-git-branch
+```
+
+## Remove
+
+```sh
+dsh plugin --profile web remove @gaohu9712/dsh-git-branch
+```
+
+Worktree folders are kept at both locations (the per-repository `.dsh/gitworktree` layouts and the legacy central root); the plugin's own settings live in the dsh settings document.
+
+## Development
+
+Build once, install a symlink, iterate:
+
+```sh
+pnpm install
+pnpm build:all
+pnpm test                # vitest
+node scripts/smoke.mjs  # real-git smoke over the built lib
+dsh plugin --profile web add link:D:/Code/dsh-worktree
+```
+
+Rebuild and restart `dsh web` to apply changes (`pnpm watch:client` in the plugin directory hot-reloads the client). No `prepare` script by design — `lib/` never enters the repo; `pnpm publish` builds it fresh into the tarball.
+
+Temporary host-only mount (this launch only, no profile changes): create a `cordis.yml` next to the repo pointing at the built host half (Windows needs the `file:///` form), then launch with it:
+
+```yml
+- insert:
+    - id: git-worktree
+      name: 'file:///D:/Code/dsh-worktree/lib/index.js'
+```
+
+```sh
+dsh web --patch <plugin-dir>/cordis.yml
+```
+
+Only the host half mounts in this mode (the `/plugin/git-worktree/*` routes keep working); for UI work use the `link:` install above.

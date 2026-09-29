@@ -1,0 +1,365 @@
+/* git-worktree bundle configuration on the Plugins page. The page owns the
+ * chrome (title, icon, breadcrumb); this component renders either the
+ * bundle-row summary line or the configuration form inside the page. Visual
+ * language mirrors the settings section's own card chrome (layer fills,
+ * footer buttons); tokens only, no literal colors. */
+
+/* The one-line preview on the bundle's row. */
+.summary {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* The configuration form inside the bundle's page. */
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.fieldLabel {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* The read-only legacy storage root: text (not an input — the location is
+ * historical and cannot be edited) plus its "unused" state on one row. */
+.rootRow {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.rootValue {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-primary);
+  overflow-wrap: anywhere;
+}
+
+.rootUnused {
+  flex: none;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-tertiary);
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: 4px;
+  padding: 0 5px;
+}
+
+.hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 8px 0 4px;
+  border-top: 0.5px solid var(--dsw-alias-border-l2);
+}
+
+.failed {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-error);
+}
+
+.discard,
+.save {
+  appearance: none;
+  border: 0.5px solid transparent;
+  border-radius: 8px;
+  padding: 5px 14px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.discard {
+  border-color: var(--dsw-alias-border-l2);
+  background: none;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.discard:hover:not(:disabled) {
+  color: var(--dsw-alias-label-primary);
+  border-color: var(--dsw-alias-label-dimmed);
+}
+
+.save {
+  background: var(--dsw-alias-label-primary);
+  color: var(--dsw-alias-bg-layer-3);
+}
+
+.discard:disabled,
+.save:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.discard:focus-visible,
+.save:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 1px;
+}
+
+/* Sidebar-grouping switch: title + hint + caution beside a checkbox. */
+.toggleRow {
+  margin-top: 10px;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.toggleText {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.toggleLabel {
+  color: var(--dsw-alias-label-primary);
+  font-weight: 500;
+}
+
+.toggleMark {
+  margin-left: 4px;
+  font-weight: 400;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.toggleHint {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.toggleControl {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  margin-top: 2px;
+}
+
+.spinner {
+  display: flex;
+  color: var(--dsw-alias-label-tertiary);
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.toggle {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--dsw-alias-brand-primary);
+  cursor: pointer;
+}
+
+.toggle:disabled {
+  cursor: progress;
+}
+
+/* Manager entry row: title + hint on the left (the toggle rows' text
+ * column), the launcher button on the right — the same posture as the
+ * grouping switch, minus the checkbox. (.field is columnar; the row
+ * direction is restated here.) */
+.manageRow {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.manage {
+  appearance: none;
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: 8px;
+  background: none;
+  font: inherit;
+  font-size: 13px;
+  color: var(--dsw-alias-label-primary);
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.manage:hover {
+  border-color: var(--dsw-alias-brand-primary);
+}
+
+.manage:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: -2px;
+}
+
+/* Keep-cap row: the number input rides the toggle row's title column, and
+ * stays disabled while the auto-prune switch is off (the cap means nothing
+ * without the prune that enforces it). */
+.keepRow {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.keepControl {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.keepInput {
+  width: 96px;
+  appearance: none;
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2);
+  font: inherit;
+  font-size: 13px;
+  color: var(--dsw-alias-label-primary);
+  padding: 6px 10px;
+}
+
+.keepInput:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: -2px;
+}
+
+.keepInput:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.keepBad {
+  font-size: 12px;
+  color: var(--dsw-alias-label-danger, #d64545);
+}
+
+.copyFilesRow {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.copyFilesInput {
+  width: 100%;
+  box-sizing: border-box;
+  appearance: none;
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2);
+  font: inherit;
+  font-family: monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-primary);
+  padding: 6px 10px;
+  resize: vertical;
+  min-height: 64px;
+}
+
+.copyFilesInput:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: -2px;
+}
+
+.copyFilesInput:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Write-through switches flip optimistically, so a rejected write shows up
+ * as the control snapping back. This note sits in the switch's own text
+ * column and says which one did not take. */
+.switchBad {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-danger, #d64545);
+}
+
+/* The auto-prune audit trail (清理记录): newest first, one run per line —
+ * relative time, the removed directories with their belonging, then the
+ * run's exceptions in the secondary tone. */
+.historyRow {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.history {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.historyRun {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 8px;
+  border: 0.5px solid color-mix(in srgb, currentColor 12%, transparent);
+  border-radius: 6px;
+}
+
+.historyTime {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+
+.historyLine {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-secondary);
+  overflow-wrap: anywhere;
+}
+
+/* The fold toggle. A link, not a button chrome: it reveals rows in place,
+ * it does not act on anything. */
+.historyMore {
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-link, var(--dsw-alias-label-secondary));
+  cursor: pointer;
+}
+
+.historyMore:hover {
+  text-decoration: underline;
+}
