@@ -22,6 +22,7 @@ export type GitWorktreeKey =
   | 'menuFetch'
   | 'menuUpdate'
   | 'menuPush'
+  | 'menuPushUnavailable'
   | 'ctxCheckout'
   | 'ctxHop'
   | 'ctxWorktree'
@@ -151,6 +152,7 @@ export const en: Record<GitWorktreeKey, string> = {
   menuFetch: 'Fetch',
   menuUpdate: 'Update current branch from upstream',
   menuPush: 'Push current branch to upstream',
+  menuPushUnavailable: 'No upstream or commits to push',
   ctxCheckout: 'Check out',
   ctxHop: 'Go to this worktree',
   ctxWorktree: 'Create worktree',
@@ -281,6 +283,7 @@ export const zh: Record<GitWorktreeKey, string> = {
   menuFetch: '提取',
   menuUpdate: '更新当前分支',
   menuPush: '推送当前分支',
+  menuPushUnavailable: '没有上游或没有可推送的提交',
   ctxCheckout: '签出',
   ctxHop: '跳到此工作树',
   ctxWorktree: '创建工作树',

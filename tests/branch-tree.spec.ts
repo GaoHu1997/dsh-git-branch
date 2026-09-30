@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  buildTree, chainExpanded, collectFolderPaths, groupKey, groupRows,
+  buildTree, chainExpanded, collectFolderPaths, groupKey, groupRows, hasPushableCommits,
   type BranchRow, type TreeNode,
 } from '../src/client/branch-tree.ts'
 import { buildBranchRows, buildLinkedWorktreeRows } from '../src/client/BranchChip.tsx'
@@ -18,6 +18,22 @@ function outline(nodes: TreeNode[], depth = 0, out: string[] = []): string[] {
   }
   return out
 }
+
+describe('hasPushableCommits', () => {
+  it('enables push only when the current branch is ahead', () => {
+    expect(hasPushableCommits([{ name: 'main', kind: 'local', ahead: 2 }], 'main')).toBe(true)
+  })
+
+  it('disables push when the branch is synchronized or has no upstream', () => {
+    expect(hasPushableCommits([{ name: 'main', kind: 'local', ahead: 0 }], 'main')).toBe(false)
+    expect(hasPushableCommits([{ name: 'main', kind: 'local' }], 'main')).toBe(false)
+  })
+
+  it('disables push when the current row is missing or only remote', () => {
+    expect(hasPushableCommits([{ name: 'origin/main', kind: 'remote', ahead: 3 }], 'main')).toBe(false)
+    expect(hasPushableCommits([], 'main')).toBe(false)
+  })
+})
 
 describe('groupRows', () => {
   it('splits the flat list into the three groups, order preserved', () => {

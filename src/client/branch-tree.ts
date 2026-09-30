@@ -35,6 +35,13 @@ export interface BranchRow {
   behind?: number
 }
 
+/** Whether a bare `git push` has a known upstream and local commits ahead. */
+export function hasPushableCommits(rows: readonly BranchRow[], currentBranch: string): boolean {
+  const current = rows.find(row => row.name === currentBranch && row.kind !== 'remote')
+  if (current === undefined || current.ahead === undefined) return false
+  return current.ahead > 0
+}
+
 /** One node of the '/' prefix tree built from the row list: every segment
  * boundary is a folder level, so `feature/x/y` nests under `feature` and
  * `x`, and the leaves (rows) sit at the terminal nodes. */

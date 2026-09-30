@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { join, normalize, resolve } from 'node:path'
 import {
-  addWorktree, addWorktreeCutout, appendWorktreeExclude, createBranch, cutoutBranchName, deleteBranch, fetchAll, inspectWorktree, probeRepo, probeWorkspaceGit, removeWorktree, renameBranch, switchBranch, updateBranch, WORKTREE_EXCLUDE_RULE,
+  addWorktree, addWorktreeCutout, appendWorktreeExclude, createBranch, cutoutBranchName, deleteBranch, fetchAll, inspectWorktree, probeRepo, probeWorkspaceGit, pushBranch, removeWorktree, renameBranch, switchBranch, updateBranch, WORKTREE_EXCLUDE_RULE,
   type ExcludeSeams, type Exec, type ExecResult,
 } from '../src/git.ts'
 
@@ -396,6 +396,24 @@ describe('updateBranch', () => {
         out: { code: 128, stderr: 'fatal: Not possible to fast-forward, aborting.\n' } },
     ])
     await expect(updateBranch(exec, '/repo')).rejects.toThrow('Not possible to fast-forward')
+  })
+})
+
+describe('pushBranch', () => {
+  it('lets git push report a missing upstream instead of failing in the probe', async () => {
+    const exec = scripted([
+      { args: ['rev-parse', '@{u}'], out: { code: 128, stderr: 'fatal: no upstream configured\n' } },
+      { args: ['push'], out: { code: 128, stdout: 'fatal: current branch has no upstream branch\n' } },
+    ])
+    await expect(pushBranch(exec, '/repo')).rejects.toThrow('fatal: current branch has no upstream branch')
+  })
+
+  it('uses the process error when a failed command has no output', async () => {
+    const exec = scripted([
+      { args: ['rev-parse', '@{u}'], out: { stdout: 'abc\n' } },
+      { args: ['push'], out: { code: 1, errorMessage: 'spawn git ENOENT' } },
+    ])
+    await expect(pushBranch(exec, '/repo')).rejects.toThrow('spawn git ENOENT')
   })
 })
 

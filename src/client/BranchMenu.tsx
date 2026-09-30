@@ -112,7 +112,7 @@ import {
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import { branchNameIssue } from '../normalize.ts'
 import {
-  buildTree, chainExpanded, collectFolderPaths, groupKey, groupRows,
+  buildTree, chainExpanded, collectFolderPaths, groupKey, groupRows, hasPushableCommits,
   type BranchRow, type TreeNode,
 } from './branch-tree.ts'
 import { dispatchBranchMenuKeyDown } from './branch-keyboard.ts'
@@ -630,6 +630,7 @@ export function BranchMenu({
    * prefix tree — always on; TREE_MIN_ROWS only sets the default opening
    * depth (see the open-reset effect). */
   const grouped = useMemo(() => groupRows(rows), [rows])
+  const canPush = hasPushableCommits(rows, currentBranch)
   const localTree = useMemo(() => buildTree(grouped.localRows), [grouped.localRows])
   const remoteTree = useMemo(() => buildTree(grouped.remoteDisplayRows), [grouped.remoteDisplayRows])
   /** Fresh display→action map for the stale-safe document keydown listener
@@ -1734,9 +1735,9 @@ export function BranchMenu({
             <button
               type="button"
               className={pushBusy ? `${css.menuToolButton} ${css.menuToolButtonRunning}` : css.menuToolButton}
-              title={t('menuPush')}
-              aria-label={t('menuPush')}
-              disabled={busy || fetchBusy || updateBusy}
+              title={canPush ? t('menuPush') : t('menuPushUnavailable')}
+              aria-label={canPush ? t('menuPush') : t('menuPushUnavailable')}
+              disabled={busy || fetchBusy || updateBusy || !canPush}
               onClick={() => {
                 // A staged confirm must not ride out the push: while it
                 // runs, busy would flip its labels into progress text for

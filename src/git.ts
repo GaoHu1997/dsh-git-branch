@@ -16,6 +16,8 @@ export interface ExecResult {
   code: number
   stdout: string
   stderr: string
+  /** Node-level failure text when the process never produced stderr. */
+  errorMessage?: string
 }
 
 /**
@@ -65,10 +67,13 @@ export interface RepoFacts {
 export function childProcessExec(file: string, args: readonly string[], options: { cwd: string }): Promise<ExecResult> {
   return new Promise((resolvePromise) => {
     execFile(file, args, { cwd: options.cwd, encoding: 'utf8', timeout: 20_000, windowsHide: true, maxBuffer: 4 * 1024 * 1024 }, (error, stdout, stderr) => {
-      // execFile reports any failure (non-zero exit, spawn error, timeout) as
-      // a truthy error; the specific exit code never carries signal here —
-      // stderr does — so every failure collapses to 1.
-      resolvePromise({ code: error !== null ? 1 : 0, stdout: stdout ?? '', stderr: stderr ?? '' })
+      const code = error === null ? 0 : typeof error.code === 'number' ? error.code : 1
+      resolvePromise({
+        code,
+        stdout: stdout ?? '',
+        stderr: stderr ?? '',
+        ...(error instanceof Error ? { errorMessage: error.message } : {}),
+      })
     })
   })
 }
@@ -76,7 +81,14 @@ export function childProcessExec(file: string, args: readonly string[], options:
 /** Run one git command; a non-zero exit raises {@link GitError} with stderr. */
 async function git(exec: Exec, cwd: string, args: readonly string[]): Promise<string> {
   const result = await exec('git', args, { cwd })
-  if (result.code !== 0) throw new GitError(args, result.code, result.stderr)
+  if (result.code !== 0) {
+    const diagnostic = result.stderr.trim() !== ''
+      ? result.stderr
+      : result.stdout.trim() !== ''
+        ? result.stdout
+        : result.errorMessage ?? 'git produced no diagnostic output'
+    throw new GitError(args, result.code, diagnostic)
+  }
   return result.stdout
 }
 
@@ -556,15 +568,16 @@ export interface PushOutcome {
  * session pushes the branch ITS worktree holds.
  * @param exec - executor seam.
  * @param cwd - directory whose checked-out branch is pushed.
- * @returns the branch name and whether HEAD actually moved on the remote
- * (false = the upstream already contained everything).
+ * @returns the branch and whether the remote-tracking ref changed. A branch
+ * without an upstream can still be handed to `git push`, so Git's own
+ * push-specific diagnostic is preserved; in that case `pushed` is false.
  */
 export async function pushBranch(exec: Exec, cwd: string): Promise<PushOutcome> {
-  const before = (await git(exec, cwd, ['rev-parse', '@{u}'])).trim()
+  const before = await gitMaybe(exec, cwd, ['rev-parse', '@{u}'])
   await git(exec, cwd, ['push'])
-  const after = (await git(exec, cwd, ['rev-parse', '@{u}'])).trim()
+  const after = await gitMaybe(exec, cwd, ['rev-parse', '@{u}'])
   const branch = (await gitMaybe(exec, cwd, ['branch', '--show-current']))?.trim() ?? ''
-  return { branch, pushed: before !== after }
+  return { branch, pushed: before !== undefined && after !== undefined && before.trim() !== after.trim() }
 }
 
 /** Guard for route inputs: a non-empty absolute directory path. */
