@@ -90,7 +90,7 @@ dsh plugin --profile web add link:D:/Code/dsh-worktree
 
 ```yml
 - insert:
-    - id: git-worktree
+    - id: dsh-git-branch
       name: 'file:///D:/Code/dsh-worktree/lib/index.js'
 ```
 

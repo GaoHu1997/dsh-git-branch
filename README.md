@@ -90,7 +90,7 @@ Temporary host-only mount (this launch only, no profile changes): create a `cord
 
 ```yml
 - insert:
-    - id: git-worktree
+    - id: dsh-git-branch
       name: 'file:///D:/Code/dsh-worktree/lib/index.js'
 ```
 

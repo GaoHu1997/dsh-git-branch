@@ -37,6 +37,7 @@
     "./client": {
       "default": "./lib/client.js"
     },
+    "./locale/*.json": "./locale/*.json",
     "./package.json": "./package.json"
   },
   "files": [
@@ -44,7 +45,8 @@
     "!lib/**/*.map",
     "cordis.patch.yml",
     "README.md",
-    "README.zh.md"
+    "README.zh.md",
+    "locale/*.json"
   ],
   "publishConfig": {
     "registry": "https://registry.npmjs.org/",
