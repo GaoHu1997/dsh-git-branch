@@ -1,6 +1,6 @@
 {
   "name": "@gaohu9712/dsh-git-branch",
-  "version": "0.4.6",
+  "version": "1.0.0",
   "description": "DSH plugin: branch visibility, git push and git worktree isolation for Web UI sessions",
   "keywords": [
     "dsh",
