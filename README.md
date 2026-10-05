@@ -1,6 +1,7 @@
 # dsh-git-branch
 
 [![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
+[![CI](https://github.com/GaoHu1997/dsh-git-branch/actions/workflows/ci.yml/badge.svg)](https://github.com/GaoHu1997/dsh-git-branch/actions/workflows/ci.yml)
 
 ![dsh-git-branch in the Web UI](docs/images/gitworktree.png)
 
@@ -85,6 +86,21 @@ dsh plugin --profile web add link:D:/Code/dsh-worktree
 ```
 
 Rebuild and restart `dsh web` to apply changes (`pnpm watch:client` in the plugin directory hot-reloads the client). No `prepare` script by design — `lib/` never enters the repo; `pnpm publish` builds it fresh into the tarball.
+
+### Release
+
+CI (`.github/workflows/ci.yml`) runs typecheck, tests and the full build on every push to `main` and every pull request. Publishing is tag-driven by `.github/workflows/release.yml`: a pushed `vX.Y.Z` tag publishes exactly the `version` in `package.json` and opens the matching GitHub Release with the packed tarball attached.
+
+`version` is bumped by hand in its own `chore:` commit — the workflows never change it. Once that commit is on `main`:
+
+```sh
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+The release workflow refuses a tag that disagrees with `package.json`, refuses a version already on npm, and publishes prerelease versions (any `version` containing `-`) under the `next` dist-tag so a plain `install` never resolves an RC. Stable versions go to `latest`.
+
+Both workflows need a repository secret **`NPM_TOKEN`** — an npm automation token with publish rights for `@gaohu9712/dsh-git-branch` (Settings → Secrets and variables → Actions).
 
 Temporary host-only mount (this launch only, no profile changes): create a `cordis.yml` next to the repo pointing at the built host half (Windows needs the `file:///` form), then launch with it:
 

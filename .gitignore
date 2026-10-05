@@ -9,3 +9,6 @@ lib/
 .zcode/
 scripts/*.png
 docs/
+# Local tarballs and CI release assets — the package is built fresh from source
+# by the workflows in .github/workflows/, never carried in the repo
+artifacts/

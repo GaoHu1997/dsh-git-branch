@@ -1,0 +1,125 @@
+name: Release
+
+# Tag-driven release: pushing a `vX.Y.Z` tag publishes exactly the version in
+# package.json to npm and opens the matching GitHub Release. Bumping `version`
+# stays a manual chore commit (see AGENTS.md), so the tag is the only trigger.
+on:
+  push:
+    tags:
+      - 'v*'
+
+# contents: write is required to create the GitHub Release; nothing else.
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: publish to npm
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # No `version` input on purpose: the action reads packageManager from
+      # package.json (pnpm@11.8.0), and passing both is an error.
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # A tag that disagrees with package.json would publish the wrong version,
+      # so it fails here first. Prerelease versions go to `next`: npm would
+      # otherwise point `latest` (what every plain install resolves) at them.
+      - name: Match tag against package.json
+        id: meta
+        run: |
+          set -euo pipefail
+          version="$(node -p 'require("./package.json").version')"
+          name="$(node -p 'require("./package.json").name')"
+          if [ "${GITHUB_REF_NAME}" != "v${version}" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match package.json version ${version}"
+            exit 1
+          fi
+          case "${version}" in
+            *-*) dist_tag=next; prerelease=true ;;
+            *)   dist_tag=latest; prerelease=false ;;
+          esac
+          echo "name=${name}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "dist_tag=${dist_tag}" >> "$GITHUB_OUTPUT"
+          echo "prerelease=${prerelease}" >> "$GITHUB_OUTPUT"
+          echo "Releasing ${name}@${version} under dist-tag ${dist_tag}"
+
+      - name: Refuse to republish an existing version
+        run: |
+          set -euo pipefail
+          if npm view "${{ steps.meta.outputs.name }}@${{ steps.meta.outputs.version }}" version >/dev/null 2>&1; then
+            echo "::error::${{ steps.meta.outputs.version }} is already on npm — bump version in a chore commit instead"
+            exit 1
+          fi
+
+      # Verification deliberately runs before `pnpm publish` even though
+      # prepublishOnly repeats it: a named failing step is easier to read than
+      # a publish that dies mid-lifecycle.
+      - name: Typecheck client
+        run: pnpm run typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build host and client
+        run: pnpm run build:all
+
+      - name: Pack tarball for the GitHub Release
+        run: pnpm pack --pack-destination artifacts
+
+      # The token goes into a throwaway user config (NPM_CONFIG_USERCONFIG), so
+      # the tracked .npmrc — and its @deepseek-ai mirror pin — stays untouched.
+      - name: Publish to npm
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${NPM_TOKEN}" ]; then
+            echo "::error::repository secret NPM_TOKEN is not set (npm automation token with publish rights)"
+            exit 1
+          fi
+          npmrc="${RUNNER_TEMP}/release-npmrc"
+          printf '//registry.npmjs.org/:_authToken=%s\n' "${NPM_TOKEN}" > "$npmrc"
+          export NPM_CONFIG_USERCONFIG="$npmrc"
+          pnpm publish --access public --no-git-checks --tag "${{ steps.meta.outputs.dist_tag }}"
+
+      # Runs only after npm accepted the package, so a Release never advertises
+      # a version that was not published.
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          prerelease_flag=""
+          if [ "${{ steps.meta.outputs.prerelease }}" = "true" ]; then
+            prerelease_flag="--prerelease"
+          fi
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" artifacts/*.tgz --clobber
+          else
+            gh release create "$tag" artifacts/*.tgz \
+              --title "$tag" \
+              --verify-tag \
+              --generate-notes \
+              $prerelease_flag
+          fi

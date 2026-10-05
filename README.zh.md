@@ -1,6 +1,7 @@
 # dsh-git-branch（git 分支管理）
 
 [![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
+[![CI](https://github.com/GaoHu1997/dsh-git-branch/actions/workflows/ci.yml/badge.svg)](https://github.com/GaoHu1997/dsh-git-branch/actions/workflows/ci.yml)
 
 ![Web 界面中的 dsh-git-branch](docs/images/gitworktree_zh.png)
 
@@ -85,6 +86,21 @@ dsh plugin --profile web add link:D:/Code/dsh-worktree
 ```
 
 重新构建并重启 `dsh web` 即可生效（插件目录里跑 `pnpm watch:client` 可热重载客户端）。刻意不设 `prepare` 脚本——`lib/` 不入库，`pnpm publish` 现场构建打进 tarball。
+
+### 发布
+
+CI（`.github/workflows/ci.yml`）在每次推送 `main` 和每个 PR 上跑类型检查、测试与完整构建。发布由 `.github/workflows/release.yml` 按 tag 触发：推送 `vX.Y.Z` tag 即发布 `package.json` 中完全一致的 `version`，并创建对应的 GitHub Release 附上打好的 tarball。
+
+`version` 由人工在独立的 `chore:` 提交里升号——工作流绝不改动它。该提交进入 `main` 后：
+
+```sh
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+发布工作流会拒绝与 `package.json` 不一致的 tag，也会拒绝 npm 上已存在的版本；带预发布后缀（`version` 含 `-`）的版本发到 `next` dist-tag，保证普通 `install` 不会装到 RC，稳定版发到 `latest`。
+
+两个工作流都需要仓库 secret **`NPM_TOKEN`**——具备 `@gaohu9712/dsh-git-branch` 发布权限的 npm automation token（Settings → Secrets and variables → Actions）。
 
 临时只挂 host 半边（仅当次启动生效，不动 profile）：在仓库旁建 `cordis.yml` 指向构建出的 host 半边（Windows 需要 `file:///` 形式），随补丁启动：
 
