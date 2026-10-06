@@ -97,6 +97,10 @@ jobs:
             echo "::error::repository secret NPM_TOKEN is not set (npm automation token with publish rights)"
             exit 1
           fi
+          # A truncated paste is the usual cause of a 401, and it is invisible otherwise.
+          if [ "${#NPM_TOKEN}" -lt 30 ]; then
+            echo "::warning::NPM_TOKEN is only ${#NPM_TOKEN} characters — an npm access token is about 40, so this looks truncated"
+          fi
           npmrc="${RUNNER_TEMP}/release-npmrc"
           printf '//registry.npmjs.org/:_authToken=%s\n' "${NPM_TOKEN}" > "$npmrc"
           export NPM_CONFIG_USERCONFIG="$npmrc"
