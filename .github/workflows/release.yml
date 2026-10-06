@@ -100,6 +100,25 @@ jobs:
           npmrc="${RUNNER_TEMP}/release-npmrc"
           printf '//registry.npmjs.org/:_authToken=%s\n' "${NPM_TOKEN}" > "$npmrc"
           export NPM_CONFIG_USERCONFIG="$npmrc"
+          # npm answers an unauthorised PUT with an opaque 404 ("Not found"), so the
+          # credential is verified first: a bad, expired or read-only token then fails
+          # here with a legible reason instead of a misleading 404.
+          echo "NPM_TOKEN: length=${#NPM_TOKEN} prefix=${NPM_TOKEN:0:4}(masked)"
+          if ! npm_user="$(pnpm whoami --registry https://registry.npmjs.org/ 2>&1)"; then
+            echo "::error::NPM_TOKEN was rejected by npm: ${npm_user}"
+            exit 1
+          fi
+          echo "Authenticated on npm as: ${npm_user}"
+          pkg_name="$(node -p 'require("./package.json").name')"
+          case "${pkg_name}" in
+            @*)
+              owner="${pkg_name%%/*}"
+              owner="${owner#@}"
+              if [ "${owner}" != "${npm_user}" ]; then
+                echo "::warning::token authenticates as '${npm_user}' but '${pkg_name}' publishes under the '${owner}' scope"
+              fi
+              ;;
+          esac
           pnpm publish --access public --no-git-checks --tag "${{ steps.meta.outputs.dist_tag }}"
 
       # Runs only after npm accepted the package, so a Release never advertises
