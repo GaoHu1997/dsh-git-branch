@@ -232,7 +232,7 @@ describe('client apply', () => {
     apply(ctx as never)
     expect(ctx.slotNames).toContain('plugins.bundle.config')
     const options = ctx.registrationOf('plugins.bundle.config')
-    expect(options.key).toBe('@gaohu9712/dsh-git-branch')
+    expect(options.key).toBe('dsh-git-branch')
     // The injected face carries the manager dialog and the form actions —
     // and no directory picker anymore (the legacy root is read-only).
     const face = options.inject as () => Record<string, unknown>

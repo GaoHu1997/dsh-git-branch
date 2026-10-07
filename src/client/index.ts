@@ -76,7 +76,7 @@ const GIT_WORKTREE_NS = 'git-worktree'
  * (the slot contract keys a bundle's own configuration by the bundle's
  * package name; it matches the `cordis.patch.yml` entry verbatim).
  */
-const PLUGIN_PACKAGE = '@gaohu9712/dsh-git-branch'
+const PLUGIN_PACKAGE = 'dsh-git-branch'
 
 /** Required services: the slot ledger, session/workspace runtimes, the
  * workspace navigation/directory face, copy, and the config forms backing
