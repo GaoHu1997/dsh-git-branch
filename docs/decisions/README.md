@@ -15,3 +15,4 @@
 ## 索引
 
 - [0001 — npm 包名从 @gaohu9712/dsh-git-branch 改为 dsh-git-branch](0001-rename-npm-package.md)
+- [0002 — 发布 v1.0.1 补丁版本](0002-release-v1.0.1.md)
