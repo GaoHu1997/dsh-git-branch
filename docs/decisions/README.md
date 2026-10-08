@@ -17,3 +17,4 @@
 - [0001 — npm 包名从 @gaohu9712/dsh-git-branch 改为 dsh-git-branch](0001-rename-npm-package.md)（已废弃，被 0003 取代）
 - [0002 — 发布 v1.0.1 补丁版本](0002-release-v1.0.1.md)
 - [0003 — 包名改为 dsh-git-branch-manage（dsh-git-branch 已被他人占用）](0003-rename-package-to-dsh-git-branch-manage.md)
+- [0004 — Release 步骤打印最终状态并在草稿时告警](0004-release-status-logging.md)

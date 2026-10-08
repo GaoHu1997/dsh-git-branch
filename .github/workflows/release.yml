@@ -146,3 +146,15 @@ jobs:
               --generate-notes \
               $prerelease_flag
           fi
+          # `gh release upload` prints nothing on success, and a pre-existing release
+          # for this tag (for example a draft kept for hand-written notes) makes this
+          # step take that branch. Report the resulting state instead of staying silent,
+          # so a quiet upload is never mistaken for a missing Release.
+          info="$(gh release view "$tag" --json isDraft,url,assets)"
+          printf '%s' "$info" | jq -r '"Release \(.url)\ndraft=\(.isDraft) assets=\(.assets|length)"'
+          printf '%s' "$info" | jq -r '.assets[] | "  asset: \(.name) (\(.size) bytes)"'
+          # A draft is invisible to anyone without write access, so it must never look
+          # like a finished release: publishing stays a deliberate human act.
+          if [ "$(printf '%s' "$info" | jq -r '.isDraft')" = "true" ]; then
+            echo "::warning::GitHub Release ${tag} is still a draft and therefore not public — publish it with: gh release edit ${tag} --draft=false"
+          fi
