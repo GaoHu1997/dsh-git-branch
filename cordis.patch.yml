@@ -2,4 +2,4 @@
 # layers (the user's profile cordis.patch.yml) may address the row by id.
 - insert:
     - id: dsh-git-branch
-      name: 'dsh-git-branch'
+      name: 'dsh-git-branch-manage'

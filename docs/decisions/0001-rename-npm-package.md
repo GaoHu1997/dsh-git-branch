@@ -1,6 +1,6 @@
 # 0001 — npm 包名从 @gaohu9712/dsh-git-branch 改为 dsh-git-branch
 
-状态: 已接受
+状态: 已废弃（被 0003 取代）
 
 ## 背景
 
