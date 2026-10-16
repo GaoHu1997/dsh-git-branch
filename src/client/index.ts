@@ -1,8 +1,8 @@
 /**
  * dsh-git-branch browser half: the composer branch chip + worktree toggle
  * (conversation.input.left) for blank sessions and the plugin configuration
- * card on the Plugins tab (the `git-worktree` settings namespace — the
- * worktree storage root — edited through the settings scope). Repo facts and
+ * card on the Plugins tab (the `dsh-git-branch` Host entry — the
+ * worktree storage root — edited through its configuration form). Repo facts and
  * worktree creation flow through the host half's own routes; adopting a
  * freshly created worktree registers it and starts a session through the
  * framework's uiWorkspace navigation.
@@ -66,10 +66,11 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 const NS = 'git-worktree'
 
 /**
- * Namespace of the git-worktree settings section. Spelled here rather than
- * imported: a client package must not depend on a Host package.
+ * Host composition entry id from cordis.patch.yml. Configuration forms use
+ * this id; locale and route namespaces are independent. Kept client-local
+ * because the browser bundle must not import the Host plugin.
  */
-const GIT_WORKTREE_NS = 'git-worktree'
+const PLUGIN_ENTRY_ID = 'dsh-git-branch'
 
 /**
  * This package's own name — the key `plugins.bundle.config` dispatches by
@@ -86,7 +87,7 @@ export const inject = ['slots', 'sessions', 'workspaces', 'uiWorkspace', 'locale
 export function apply(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'git-worktree: dictionaries')
 
-  const groupingForm = ctx.configForms.get<SectionValue>(GIT_WORKTREE_NS)
+  const settingsForm = ctx.configForms.get<SectionValue>(PLUGIN_ENTRY_ID)
 
   /** The DSH half of one worktree removal, read from the live snapshots: the
    * workspace registration sitting on the directory, whether any of its
@@ -153,7 +154,7 @@ export function apply(ctx: ClientContext): void {
     // updatedAt — running-session directories, the fresh creation, and the
     // current session's directory are excluded from selection outright.
     pruneWorktrees: async (createdPath) => {
-      const section = groupingForm.getSnapshot()
+      const section = settingsForm.getSnapshot()
       if (section.status !== 'ready') return undefined
       if ((section.value?.autoPruneWorktrees ?? false) !== true) return undefined
       const keep = section.value?.keepWorktrees ?? 30
@@ -253,11 +254,7 @@ export function apply(ctx: ClientContext): void {
     inject: chipInjected,
   }, BranchChipDock))
 
-  // The Plugins configuration tab dispatches keyed cards for the namespaces
-  // the Host serves; the git-worktree host half registers this key, so the
-  // storage-root card pairs with it without any upstream change. One bind
-  // backs both the card form (checkbox reads the snapshot) and the sidebar
-  // seat (subscribe drives register/dispose).
+  // One configuration form backs both the settings card and the lazy prune.
   // The worktree manager dialog's face: scan/inspect ride the plugin routes,
   // workspace/session shapes ride the live service snapshots — the component
   // itself stays ctx-free (same discipline as the sidebar's injected face).
@@ -316,21 +313,20 @@ export function apply(ctx: ClientContext): void {
     deleteWorkspace: (workspaceId) => ctx.workspaces.delete(workspaceId as WorkspaceId),
   })
 
-  const form = new CardForm(groupingForm)
+  const form = new CardForm(settingsForm)
   const store = form.bind()
   // The Plugins page dispatches a bundle's own configuration by the bundle's
   // PACKAGE NAME (this package — see cordis.patch.yml), rendered on the
-  // bundle's page under `view: 'page'` and previewed under 'summary'. The
-  // registration follows the served-namespace directory through the shared
-  // describe face: a deployment whose Host half is not composed (the
-  // `git-worktree` namespace unserved) shows no trace of the card, and a
-  // late-arriving Host registration still picks it up.
+  // bundle's page under `view: 'page'` and previewed under 'summary'.
+  // Registration follows the Host entry directory through the shared describe
+  // face: a deployment without the `dsh-git-branch` entry shows no trace of
+  // the card, and a late-arriving Host entry still picks it up.
   const describeFace = ctx.configForms.describe()
   let configDisposer: (() => void) | undefined
   const syncCardSeat = (): void => {
     const snapshot = describeFace.getSnapshot()
     const served = snapshot.status === 'ready'
-      && (snapshot.view?.namespaces.some(entry => entry.ns === GIT_WORKTREE_NS) ?? false)
+      && (snapshot.view?.namespaces.some(entry => entry.ns === PLUGIN_ENTRY_ID) ?? false)
     if (served && configDisposer === undefined) {
       configDisposer = ctx.slots.inject('plugins.bundle.config', () => ctx.slots.register({
         name: 'plugins.bundle.config',

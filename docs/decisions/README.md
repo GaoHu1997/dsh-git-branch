@@ -27,3 +27,4 @@
 - [0008 — 保留 Git 推送失败诊断](0008-preserve-git-push-diagnostics.md)
 - [0009 — 禁用无可推送提交的推送按钮](0009-disable-empty-push.md)
 - [0010 — GitHub Actions 承担 CI 与 tag 触发的 npm 发布](0010-github-actions-ci-and-npm-release.md)
+- [0011 — 设置面板按 Host 条目 id 读取插件配置](0011-settings-use-host-entry-id.md)

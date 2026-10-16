@@ -1,5 +1,5 @@
 /**
- * Form over the `git-worktree` settings namespace.
+ * Form over the `dsh-git-branch` Host entry.
  *
  * `rootDir` is READ-ONLY: it names the historical central storage location
  * (kept for the worktrees already living there — new ones are created inside
@@ -108,7 +108,7 @@ export interface CardActions {
 }
 
 /**
- * Stages the settings edit over the `git-worktree` scope.
+ * Stages settings edits over the `dsh-git-branch` Host entry.
  *
  * The form publishes through a snapshot store because the slot component
  * reads through a snapshot selector while both the scope and the local draft
@@ -124,7 +124,7 @@ export class CardForm {
   private switchFailed: SwitchField | null = null
 
   /**
-   * @param scope - the bound configuration form for the `git-worktree` namespace.
+   * @param scope - the bound configuration form for the `dsh-git-branch` Host entry.
    */
   constructor(private readonly scope: ConfigForm<SectionValue>) {
     this.snapshotValue = this.project()

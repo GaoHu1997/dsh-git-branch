@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { apply, inject } from '../src/client/index.ts'
+import type { CardActions, CardStore } from '../src/client/card-form.ts'
 import type { BranchChipInjected } from '../src/client/slots.ts'
 import { ROUTE_EXISTS, ROUTE_REMOVE } from '../src/wire.ts'
 
@@ -10,7 +11,7 @@ import { ROUTE_EXISTS, ROUTE_REMOVE } from '../src/wire.ts'
  * faces without rendering any component. Host 0.1.6-alpha.2 shape: session
  * start lives on `uiWorkspace` and the bundle configuration card dispatches
  * under `plugins.bundle.config`, registered only while the shared describe
- * face reports the `git-worktree` namespace as served.
+ * face reports the `dsh-git-branch` Host entry as served.
  */
 class FakeCtx {
   readonly locale = { register: (ns: string, dict: unknown) => { this.namespaces.push([ns, dict]) } }
@@ -82,17 +83,33 @@ class FakeCtx {
 
   readonly slotNames: string[] = []
 
-  /** Namespaces the describe face currently reports as served. */
-  servedNamespaces: string[] = ['git-worktree']
+  /** Host entry ids the describe face currently reports as served. */
+  servedNamespaces: string[] = ['dsh-git-branch']
+  readonly configWrites: Array<{ entryId: string; field: string; value: unknown }> = []
   private readonly describeListeners = new Set<() => void>()
   readonly configForms = {
-    get: <T, >(_entryId: string) => this.scope as unknown as {
+    get: <T, >(entryId: string) => ({
+      ...this.scope,
+      getSnapshot: () => this.servedNamespaces.includes(entryId)
+        ? this.scope.getSnapshot()
+        : { status: 'unavailable', value: undefined, user: undefined, writable: false },
+      set: async (field: string, value: unknown): Promise<boolean> => {
+        if (!this.servedNamespaces.includes(entryId)) return false
+        this.configWrites.push({ entryId, field, value })
+        return true
+      },
+    }) as unknown as {
       getSnapshot(): { status: string; value: T | undefined; user: unknown; writable: boolean }
       subscribe(listener: () => void): () => void
       set(field: string, value: unknown): Promise<boolean>
       unset(field: string): Promise<boolean>
     },
     describe: () => this.describeFace,
+  }
+
+  setServedNamespaces(namespaces: string[]): void {
+    this.servedNamespaces = namespaces
+    for (const listener of this.describeListeners) listener()
   }
 
   private readonly describeFace = {
@@ -241,7 +258,40 @@ describe('client apply', () => {
     expect('pickDirectory' in injected).toBe(false)
   })
 
-  it('leaves no trace while the Host namespace is not served', () => {
+  it('reads and writes settings through the installed Host entry', async () => {
+    const ctx = new FakeCtx()
+    apply(ctx as never)
+    const options = ctx.registrationOf('plugins.bundle.config')
+    const face = (options.inject as () => CardActions & { hooks: { gitWorktreeCard: CardStore } })()
+
+    expect(face.hooks.gitWorktreeCard.getSnapshot()).toMatchObject({
+      available: true,
+      writable: true,
+      rootDir: '/scope/root',
+    })
+    await face.setFetchBeforeCreate(true)
+    expect(ctx.configWrites).toEqual([
+      { entryId: 'dsh-git-branch', field: 'fetchBeforeCreate', value: true },
+    ])
+  })
+
+  it('follows the Host entry arriving and leaving independently of the legacy namespace', () => {
+    const ctx = new FakeCtx()
+    ctx.servedNamespaces = ['git-worktree']
+    apply(ctx as never)
+    expect(ctx.slotNames).not.toContain('plugins.bundle.config')
+
+    ctx.setServedNamespaces(['git-worktree', 'dsh-git-branch'])
+    expect(ctx.slotNames.filter(name => name === 'plugins.bundle.config')).toHaveLength(1)
+    ctx.setServedNamespaces(['dsh-git-branch'])
+    expect(ctx.slotNames.filter(name => name === 'plugins.bundle.config')).toHaveLength(1)
+
+    ctx.setServedNamespaces(['git-worktree'])
+    expect(ctx.slotNames).not.toContain('plugins.bundle.config')
+    expect(ctx.slotNames).toContain('conversation.input.left')
+  })
+
+  it('leaves no trace while the Host entry is not served', () => {
     const ctx = new FakeCtx()
     ctx.servedNamespaces = []
     apply(ctx as never)
