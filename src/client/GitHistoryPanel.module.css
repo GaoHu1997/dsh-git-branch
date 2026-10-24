@@ -524,13 +524,24 @@
   background: var(--dsw-alias-interactive-bg-hover);
 }
 
+/* Whole-row highlight for the current branch: the ✓ alone read as too
+ * quiet inside the tree. A translucent brand-blue wash plus the inset left
+ * accent and a colored name survives both themes; #4c6bf5 is the same
+ * hardcoded blue actPrimary uses (the brand token does not resolve
+ * reliably inside the better-sidebar panel). */
 .branchRowCurrent {
-  background: var(--dsw-alias-bg-layer-3);
+  background: rgba(76, 107, 245, 0.16);
+  box-shadow: inset 2px 0 0 #4c6bf5;
   cursor: default;
 }
 
 .branchRowCurrent:hover {
-  background: var(--dsw-alias-bg-layer-3);
+  background: rgba(76, 107, 245, 0.16);
+}
+
+.branchRowCurrent .branchName {
+  color: #4c6bf5;
+  font-weight: 600;
 }
 
 .branchMark {
