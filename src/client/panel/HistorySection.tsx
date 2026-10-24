@@ -97,7 +97,6 @@ const CommitRow = forwardRef<HTMLDivElement, CommitRowProps>(function CommitRow(
   const absolute = Number.isFinite(commit.date) && commit.date > 0
     ? `${when.toLocaleDateString()} ${when.toLocaleTimeString()}`
     : ''
-  const authorInitial = commit.authorName.slice(0, 1)
   return (
     <div
       ref={ref}
@@ -133,7 +132,6 @@ const CommitRow = forwardRef<HTMLDivElement, CommitRowProps>(function CommitRow(
           </span>
         </div>
         <div className={css.commitMeta}>
-          <span className={css.authorDot} aria-hidden="true">{authorInitial}</span>
           <span>{commit.authorName}</span>
           <span>{timeLabelFor(commit.date)}</span>
         </div>

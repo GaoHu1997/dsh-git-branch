@@ -718,18 +718,18 @@
   bottom: 50%;
 }
 
+/* A small plain dot on the rail — the old 10px dot with a fat card-colored
+ * ring read as a heavy black blob. #4c6bf5 for the same reason actPrimary
+ * hardcodes it (the brand token does not resolve reliably in this panel). */
 .commitDot {
   position: absolute;
-  left: 5px;
+  left: 8px;
   top: 50%;
   transform: translateY(-50%);
-  width: 10px;
-  height: 10px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
-  background: var(--dsw-alias-brand-primary);
-  border: 3px solid var(--dsw-alias-bg-layer-2);
-  box-sizing: content-box;
-  margin-left: -3px;
+  background: #4c6bf5;
 }
 
 .commitDotMerge {
@@ -810,19 +810,6 @@
   gap: 6px;
   color: var(--dsw-alias-label-tertiary);
   font-size: 11.5px;
-}
-
-.authorDot {
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: var(--dsw-alias-brand-primary);
-  color: #fff;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 9px;
-  flex: none;
 }
 
 .commitSide {
