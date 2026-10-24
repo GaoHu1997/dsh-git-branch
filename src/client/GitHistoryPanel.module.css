@@ -115,7 +115,7 @@
 }
 
 /* The page column below the topbar is a definite-height flex column and the
- * three cards split it 1.7:1.3:2 (uncommitted : branches : history) — five
+ * three cards split it 2:1:2 (uncommitted : branches : history) — five
  * shares, the topbar and gaps taking their natural height first. Each body
  * scrolls INSIDE its share — min-height: 0 is what lets a flex child shrink
  * below its content (the old natural-height model painted overflowing rows
@@ -136,13 +136,13 @@
   min-height: 84px;
 }
 
-/* The three flex-grow overrides of the 1.7:1.3:2 split. */
+/* The three flex-grow overrides of the 2:1:2 split. */
 .sectionChanges {
-  flex-grow: 1.7;
+  flex-grow: 2;
 }
 
 .sectionBranches {
-  flex-grow: 1.3;
+  flex-grow: 1;
 }
 
 .sectionHistory {
