@@ -4,9 +4,10 @@
  * the draft, and every action arrive as props from the panel state owner, so
  * this file renders and never talks to git itself.
  *
- * The card takes two shares of the panel's fixed 2:1:2 split: the file lists
- * scroll inside their own region while the commit box stays pinned below —
- * a 500-change tree must not bury the commit affordance.
+ * The card takes 1.7 shares of the panel's fixed 1.7:1.3:2 split: the file
+ * lists scroll inside their own region while the commit box stays pinned
+ * below — a 500-change tree must not bury the commit affordance, and a
+ * clean tree must not float it up either.
  *
  * The commit affordance is a split button: the main face commits, the caret
  * opens the two op variants (commit; commit and push). The AI button fills
@@ -149,36 +150,37 @@ export function UncommittedSection(props: UncommittedSectionProps): JSX.Element 
         </div>
       </div>
       <div className={css.sectionBody}>
-        {total === 0 ? <p className={css.empty}>{t('panel.clean')}</p> : null}
-        {truncated ? <p className={css.empty}>{t('panel.changesTruncated')}</p> : null}
-        {total > 0 ? (
-          <div className={css.changeList}>
-            {staged.length > 0 ? (
-              <div>
-                <div className={css.groupTitleRow}>
-                  {t('panel.staged')}
-                  <span className={css.countBadge}>{String(staged.length)}</span>
-                  <button type="button" className={css.linkBtn} disabled={busy} onClick={onUnstageAll}>{t('panel.unstageAll')}</button>
-                </div>
-                {staged.map(row => (
-                  <ChangeRowView key={`${row.staged}:${row.path}:${row.oldPath ?? ''}`} row={row} disabled={busy} onToggle={onToggleRow} t={t} />
-                ))}
+        {/* The list region ALWAYS renders (the clean-state notice rides
+          * inside it): it grows to fill the card so the commit box below
+          * stays pinned at the bottom whether or not there are changes. */}
+        <div className={css.changeList}>
+          {total === 0 ? <p className={css.empty}>{t('panel.clean')}</p> : null}
+          {truncated ? <p className={css.empty}>{t('panel.changesTruncated')}</p> : null}
+          {staged.length > 0 ? (
+            <div>
+              <div className={css.groupTitleRow}>
+                {t('panel.staged')}
+                <span className={css.countBadge}>{String(staged.length)}</span>
+                <button type="button" className={css.linkBtn} disabled={busy} onClick={onUnstageAll}>{t('panel.unstageAll')}</button>
               </div>
-            ) : null}
-            {unstaged.length > 0 ? (
-              <div>
-                <div className={css.groupTitleRow}>
-                  {t('panel.unstaged')}
-                  <span className={css.countBadge}>{String(unstaged.length)}</span>
-                  <button type="button" className={css.linkBtn} disabled={busy} onClick={onStageAll}>{t('panel.stageAll')}</button>
-                </div>
-                {unstaged.map(row => (
-                  <ChangeRowView key={`u:${row.path}:${row.oldPath ?? ''}`} row={row} disabled={busy} onToggle={onToggleRow} t={t} />
-                ))}
+              {staged.map(row => (
+                <ChangeRowView key={`${row.staged}:${row.path}:${row.oldPath ?? ''}`} row={row} disabled={busy} onToggle={onToggleRow} t={t} />
+              ))}
+            </div>
+          ) : null}
+          {unstaged.length > 0 ? (
+            <div>
+              <div className={css.groupTitleRow}>
+                {t('panel.unstaged')}
+                <span className={css.countBadge}>{String(unstaged.length)}</span>
+                <button type="button" className={css.linkBtn} disabled={busy} onClick={onStageAll}>{t('panel.stageAll')}</button>
               </div>
-            ) : null}
-          </div>
-        ) : null}
+              {unstaged.map(row => (
+                <ChangeRowView key={`u:${row.path}:${row.oldPath ?? ''}`} row={row} disabled={busy} onToggle={onToggleRow} t={t} />
+              ))}
+            </div>
+          ) : null}
+        </div>
         <div className={css.commitBox}>
           <textarea
             className={css.commitInput}
