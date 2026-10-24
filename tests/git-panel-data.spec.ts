@@ -1,10 +1,10 @@
 /**
  * Git-panel data tests: the client-side pure helpers (group splitting with
- * conflict rows, history filtering) that the three sections render.
+ * conflict rows, history and branch filtering) that the three sections render.
  */
 
 import { describe, expect, it } from 'vitest'
-import { branchGroupKeys, filterCommits, groupChanges, groupRemotes } from '../src/client/git-panel-data.ts'
+import { branchGroupKeys, filterBranches, filterCommits, groupChanges, groupRemotes } from '../src/client/git-panel-data.ts'
 import type { CommitEntry, WorktreeChange } from '../src/wire.ts'
 
 describe('groupChanges', () => {
@@ -48,6 +48,30 @@ describe('filterCommits', () => {
 
   it('returns every commit for a blank query', () => {
     expect(filterCommits(commits, '  ')).toEqual(commits)
+  })
+})
+
+describe('filterBranches', () => {
+  const rows = [
+    { name: 'main', kind: 'local', current: true },
+    { name: 'feat/git-panel', kind: 'local', current: false },
+    { name: 'origin/feat/git-panel', kind: 'remote', current: false },
+    { name: 'origin/main', kind: 'remote', current: false },
+  ] as const
+
+  it('matches the branch name case-insensitively, remote rows by full name', () => {
+    expect(filterBranches(rows, 'git-panel').map(row => row.name)).toEqual(['feat/git-panel', 'origin/feat/git-panel'])
+    expect(filterBranches(rows, 'MAIN').map(row => row.name)).toEqual(['main', 'origin/main'])
+    // The remote prefix is part of the full name, so it is searchable too.
+    expect(filterBranches(rows, 'origin/').map(row => row.name)).toEqual(['origin/feat/git-panel', 'origin/main'])
+  })
+
+  it('returns every row for a blank query', () => {
+    expect(filterBranches(rows, '  ')).toEqual([...rows])
+  })
+
+  it('matches nothing when no name contains the needle', () => {
+    expect(filterBranches(rows, 'release')).toEqual([])
   })
 })
 

@@ -658,6 +658,17 @@
   background: var(--dsw-alias-bg-layer-3);
 }
 
+/* The branch card's head variant: sits right of the title and grows toward
+ * the tools instead of being right-aligned by `margin-left: auto`. The
+ * overrides win because both selectors are single classes and this one is
+ * declared later. */
+.searchBoxHead {
+  margin-left: 0;
+  flex: 1 1 auto;
+  max-width: 320px;
+  min-width: 90px;
+}
+
 .searchInput {
   flex: 1;
   min-width: 0;

@@ -1,6 +1,6 @@
 /**
- * Pure helpers behind the Git panel: ref-badge classification, history
- * filtering, and the page state machine for "load more". No React, no I/O —
+ * Pure helpers behind the Git panel: ref-badge classification, history and
+ * branch filtering, and the page state machine for "load more". No React, no I/O —
  * everything is a plain function of its arguments so the tests can exercise
  * the exact logic the components render.
  */
@@ -89,6 +89,18 @@ export function filterCommits(commits: readonly CommitEntry[], query: string): C
   if (needle === '') return [...commits]
   return commits.filter(commit =>
     commit.subject.toLowerCase().includes(needle) || commit.authorName.toLowerCase().includes(needle))
+}
+
+/**
+ * Case-insensitive substring filter over the branch name — the branch card's
+ * head search box. A remote row matches on its full `remote/name`, which
+ * contains the prefix-stripped short name the tree renders, so searching what
+ * the user sees and searching the remote prefix both hit.
+ */
+export function filterBranches(rows: readonly BranchRow[], query: string): BranchRow[] {
+  const needle = query.trim().toLowerCase()
+  if (needle === '') return [...rows]
+  return rows.filter(row => row.name.toLowerCase().includes(needle))
 }
 
 /** Merge the next page into the accumulated list, dropping hash duplicates

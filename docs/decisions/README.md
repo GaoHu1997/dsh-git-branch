@@ -32,3 +32,4 @@
 - [0013 — Git 管理面板（侧边栏全局面板 + 提交操作 + AI 提交信息）](0013-git-history-panel.md)
 - [0014 — 面板卡片高度受控与分支树折叠/定位](0014-panel-card-height-and-branch-collapse.md)
 - [0015 — 分支菜单改右键、跨面板刷新、/switch 切会话自己的检出](0015-branch-context-menu-and-switch-target.md)
+- [0016 — 分支卡片标题栏加分支搜索框、去掉标题栏分支数量](0016-branch-card-search-box.md)

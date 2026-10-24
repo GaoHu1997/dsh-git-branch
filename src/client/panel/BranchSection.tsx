@@ -18,6 +18,11 @@
  * screen. 全部展开/全部折叠 drive every group at once, and after a checkout
  * (or expand-all) the card re-centers on the current branch row.
  *
+ * The head carries a search box: it filters both trees by branch name
+ * (case-insensitive substring), and while a query is active every matching
+ * group renders expanded with its count following the filter — the folded
+ * state the user set is untouched and comes back when the query clears.
+ *
  * @module git-worktree/client/panel/BranchSection
  */
 
@@ -27,7 +32,7 @@ import { createPortal } from 'react-dom'
 import { Button, IconCheckOutlineRegular, IconChevronDownOutlineRegular, IconChevronRightOutlineRegular, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { BranchRow } from '../git-panel-data.ts'
 import { branchNameIssue } from '../../normalize.ts'
-import { branchGroupKeys, groupRemotes } from '../git-panel-data.ts'
+import { branchGroupKeys, filterBranches, groupRemotes } from '../git-panel-data.ts'
 import type { GitPanelTranslator } from '../panel-types.ts'
 import css from '../GitHistoryPanel.module.css'
 
@@ -142,6 +147,7 @@ export function BranchSection(props: BranchSectionProps): JSX.Element {
   const [menu, setMenu] = useState<BranchMenuState | null>(null)
   const [dialog, setDialog] = useState<BranchDialogState | null>(null)
   const [draft, setDraft] = useState('')
+  const [query, setQuery] = useState('')
   const [collapsedGroups, setCollapsedGroups] = useState<ReadonlySet<string>>(COLLAPSED_ON_MOUNT)
 
   /** The card's scroll body — the locate math centers rows inside it. */
@@ -197,6 +203,15 @@ export function BranchSection(props: BranchSectionProps): JSX.Element {
   })
 
   const total = locals.length + remotes.length
+
+  /** The head search: name-substring rows only. A live query opens every
+   * group whatever the folded state is (a hidden match reads as a bug),
+   * without touching that state — clearing the query restores it. */
+  const searching = query.trim() !== ''
+  const visibleLocals = filterBranches(locals, query)
+  const visibleRemotes = filterBranches(remotes, query)
+  const openGroup = (key: string): boolean => searching || !collapsedGroups.has(key)
+  const matched = visibleLocals.length + visibleRemotes.length
 
   const openMenu = (branch: BranchRow, event: ReactMouseEvent<HTMLDivElement>): void => {
     const rect = event.currentTarget.getBoundingClientRect()
@@ -264,7 +279,7 @@ export function BranchSection(props: BranchSectionProps): JSX.Element {
       className={`${css.treeHead} ${nested ? css.treeHeadNest : ''}`}
       role="button"
       tabIndex={0}
-      aria-expanded={!collapsedGroups.has(key)}
+      aria-expanded={openGroup(key)}
       onClick={() => toggleGroup(key)}
       onKeyDown={event => {
         if (event.key === 'Enter' || event.key === ' ') {
@@ -274,9 +289,9 @@ export function BranchSection(props: BranchSectionProps): JSX.Element {
       }}
     >
       <span className={css.treeChevron}>
-        {collapsedGroups.has(key)
-          ? <IconChevronRightOutlineRegular size={12} />
-          : <IconChevronDownOutlineRegular size={12} />}
+        {openGroup(key)
+          ? <IconChevronDownOutlineRegular size={12} />
+          : <IconChevronRightOutlineRegular size={12} />}
       </span>
       <span>{label}</span>
       <span className={css.countBadge}>{String(count)}</span>
@@ -321,7 +336,17 @@ export function BranchSection(props: BranchSectionProps): JSX.Element {
     <section className={`${css.section} ${css.sectionFill} ${css.sectionBranches}`} aria-label={t('panel.branches')}>
       <div className={css.sectionHead}>
         <h2 className={css.sectionTitle}>{t('panel.branches')}</h2>
-        {total > 0 ? <span className={css.countBadge}>{String(total)}</span> : null}
+        <div className={`${css.searchBox} ${css.searchBoxHead}`}>
+          <span aria-hidden="true">⌕</span>
+          <input
+            type="text"
+            className={css.searchInput}
+            value={query}
+            placeholder={t('menuSearchPlaceholder')}
+            aria-label={t('menuSearchPlaceholder')}
+            onChange={event => setQuery(event.target.value)}
+          />
+        </div>
         <div className={css.sectionTools}>
           <button type="button" className={css.treeToggle} onClick={expandAll}>{t('menuExpandAll')}</button>
           <button type="button" className={css.treeToggle} onClick={collapseAll}>{t('menuCollapseAll')}</button>
@@ -332,25 +357,26 @@ export function BranchSection(props: BranchSectionProps): JSX.Element {
       </div>
       <div className={`${css.sectionBody} ${css.sectionBodyScroll}`} ref={bodyRef}>
         {total === 0 ? <p className={css.empty}>{t('menuNoBranches')}</p> : null}
-        {locals.length > 0 ? (
+        {total > 0 && matched === 0 ? <p className={css.empty}>{t('menuNoMatches')}</p> : null}
+        {visibleLocals.length > 0 ? (
           <div>
-            {groupHead('local', t('panel.branchLocals'), locals.length, false)}
-            {!collapsedGroups.has('local') ? (
+            {groupHead('local', t('panel.branchLocals'), visibleLocals.length, false)}
+            {openGroup('local') ? (
               <div className={css.treeChildren}>
-                {locals.map(row => renderBranchRow(row))}
+                {visibleLocals.map(row => renderBranchRow(row))}
               </div>
             ) : null}
           </div>
         ) : null}
-        {remotes.length > 0 ? (
+        {visibleRemotes.length > 0 ? (
           <div>
-            {groupHead('remote', t('panel.branchRemotes'), remotes.length, false)}
-            {!collapsedGroups.has('remote') ? (
+            {groupHead('remote', t('panel.branchRemotes'), visibleRemotes.length, false)}
+            {openGroup('remote') ? (
               <div className={css.treeNest}>
-                {groupRemotes(remotes).map(group => (
+                {groupRemotes(visibleRemotes).map(group => (
                   <div key={group.remote}>
                     {groupHead(`remote:${group.remote}`, group.remote, group.branches.length, true)}
-                    {!collapsedGroups.has(`remote:${group.remote}`) ? (
+                    {openGroup(`remote:${group.remote}`) ? (
                       <div className={css.treeChildren}>
                         {group.branches.map(row => renderBranchRow(row, row.short))}
                       </div>
