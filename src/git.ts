@@ -24,7 +24,7 @@ export interface ExecResult {
  * Process executor seam. Runs `file args` with cwd set, captures output as
  * UTF-8 text, and never throws — a non-zero exit is a normal result.
  */
-export type Exec = (file: string, args: readonly string[], options: { cwd: string }) => Promise<ExecResult>
+export type Exec = (file: string, args: readonly string[], options: { cwd: string; timeoutMs?: number }) => Promise<ExecResult>
 
 /** Failure of one git invocation: non-zero exit with the stderr text. */
 export class GitError extends Error {
@@ -67,10 +67,19 @@ export interface RepoFacts {
   worktrees: WorktreeEntry[]
 }
 
+/** Default hard timeout for one git call: generous for every LOCAL
+ * operation (status/log/commit/worktree) while still bounding hangs. */
+export const GIT_TIMEOUT_MS = 20_000
+/** Network operations (fetch/push) get a far wider budget: a slow link with
+ * a real pack transfer outruns the local default, and a killed push may have
+ * ALREADY updated the remote refs — an error toast for a push that actually
+ * landed. 120s still bounds a hung credential prompt. */
+export const NETWORK_TIMEOUT_MS = 120_000
+
 /** Real executor over node:child_process with a hard timeout. */
-export function childProcessExec(file: string, args: readonly string[], options: { cwd: string }): Promise<ExecResult> {
+export function childProcessExec(file: string, args: readonly string[], options: { cwd: string; timeoutMs?: number }): Promise<ExecResult> {
   return new Promise((resolvePromise) => {
-    execFile(file, args, { cwd: options.cwd, encoding: 'utf8', timeout: 20_000, windowsHide: true, maxBuffer: 4 * 1024 * 1024 }, (error, stdout, stderr) => {
+    execFile(file, args, { cwd: options.cwd, encoding: 'utf8', timeout: options.timeoutMs ?? GIT_TIMEOUT_MS, windowsHide: true, maxBuffer: 4 * 1024 * 1024 }, (error, stdout, stderr) => {
       const code = error === null ? 0 : typeof error.code === 'number' ? error.code : 1
       resolvePromise({
         code,
@@ -83,8 +92,8 @@ export function childProcessExec(file: string, args: readonly string[], options:
 }
 
 /** Run one git command; a non-zero exit raises {@link GitError} with stderr. */
-async function git(exec: Exec, cwd: string, args: readonly string[]): Promise<string> {
-  const result = await exec('git', args, { cwd })
+async function git(exec: Exec, cwd: string, args: readonly string[], timeoutMs?: number): Promise<string> {
+  const result = await exec('git', args, { cwd, ...(timeoutMs === undefined ? {} : { timeoutMs }) })
   if (result.code !== 0) {
     const diagnostic = result.stderr.trim() !== ''
       ? result.stderr
@@ -97,8 +106,8 @@ async function git(exec: Exec, cwd: string, args: readonly string[]): Promise<st
 }
 
 /** Run one git command, mapping a non-zero exit to undefined instead of throwing. */
-async function gitMaybe(exec: Exec, cwd: string, args: readonly string[]): Promise<string | undefined> {
-  const result = await exec('git', args, { cwd })
+async function gitMaybe(exec: Exec, cwd: string, args: readonly string[], timeoutMs?: number): Promise<string | undefined> {
+  const result = await exec('git', args, { cwd, ...(timeoutMs === undefined ? {} : { timeoutMs }) })
   return result.code === 0 ? result.stdout : undefined
 }
 
@@ -531,7 +540,7 @@ export async function deleteBranch(exec: Exec, repoRoot: string, name: string): 
  * @param repoRoot - main worktree directory (fetch is repository-wide).
  */
 export async function fetchAll(exec: Exec, repoRoot: string): Promise<void> {
-  await git(exec, repoRoot, ['fetch', '--all', '--prune'])
+  await git(exec, repoRoot, ['fetch', '--all', '--prune'], NETWORK_TIMEOUT_MS)
 }
 
 /** Outcome of {@link updateBranch}: the branch touched and whether it moved. */
@@ -585,7 +594,7 @@ export interface PushOutcome {
  */
 export async function pushBranch(exec: Exec, cwd: string): Promise<PushOutcome> {
   const before = await gitMaybe(exec, cwd, ['rev-parse', '@{u}'])
-  await git(exec, cwd, ['push'])
+  await git(exec, cwd, ['push'], NETWORK_TIMEOUT_MS)
   const after = await gitMaybe(exec, cwd, ['rev-parse', '@{u}'])
   const branch = (await gitMaybe(exec, cwd, ['branch', '--show-current']))?.trim() ?? ''
   return { branch, pushed: before !== undefined && after !== undefined && before.trim() !== after.trim() }

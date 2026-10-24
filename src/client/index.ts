@@ -378,7 +378,13 @@ export function apply(ctx: ClientContext): void {
       id: PANEL_ID,
       title: () => panelT('panel.nav'),
       description: () => panelT('panel.description'),
-      icon: (size: number) => createElement(IconBranchOutlineRegular, { size }),
+      // A tinted glyph: the primitives icon inherits currentColor, so the
+      // wrapper span carries the plugin's blue.
+      icon: (size: number) => createElement(
+        'span',
+        { style: { color: '#4c6bf5', display: 'inline-flex' } },
+        createElement(IconBranchOutlineRegular, { size }),
+      ),
       order: 150,
       single: true,
       component: (tabProps: { scope: SidebarTabScope }) => createElement(GitPanelTab, {

@@ -196,17 +196,29 @@ const GitHistoryPanelData = forwardRef<GitHistoryPanelDataHandle, {
       if (!result.ok) throw new Error(result.error)
       setCommitDraft('')
       setCommitMenuOpen(false)
-      pushToast(push ? t('panel.commitPushDone', { subject: result.subject }) : t('panel.commitDone', { subject: result.subject }), 'success')
-      if (push) {
-        // The commit already landed; a push failure must not un-report it.
-        try {
-          const pushResult = await requestPush(cwd)
-          if (!pushResult.ok) pushToast(t('errorGeneric', { message: pushResult.error }), 'error')
-          else if (!pushResult.pushed) pushToast(t('pushUpToDate'), 'success')
-          else pushToast(t('pushDone', { branch: pushResult.branch }), 'success')
-        } catch (error) {
-          pushToast(t('errorGeneric', { message: failureText(error) }), 'error')
+      if (!push) {
+        pushToast(t('panel.commitDone', { subject: result.subject }), 'success')
+        await loadAll()
+        return
+      }
+      // The push settles before ANY success copy: 「已提交并推送」 on screen
+      // while the push is still in flight read as premature, and a later
+      // failure read as double-reporting. The commit itself is never
+      // un-reported — its toast degrades to 已提交 when the push does not
+      // land.
+      try {
+        const pushResult = await requestPush(cwd)
+        if (!pushResult.ok) {
+          pushToast(t('panel.commitDone', { subject: result.subject }), 'success')
+          pushToast(t('errorGeneric', { message: pushResult.error }), 'error')
+        } else {
+          // pushed, or the remote already carried the commit — either way
+          // it is there now.
+          pushToast(t('panel.commitPushDone', { subject: result.subject }), 'success')
         }
+      } catch (error) {
+        pushToast(t('panel.commitDone', { subject: result.subject }), 'success')
+        pushToast(t('errorGeneric', { message: failureText(error) }), 'error')
       }
       await loadAll()
     })

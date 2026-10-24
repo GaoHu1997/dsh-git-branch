@@ -208,7 +208,9 @@ export function UncommittedSection(props: UncommittedSectionProps): JSX.Element 
                 className={`${css.act} ${css.actPrimary} ${css.splitCaret}`}
                 aria-label={t('panel.commitMoreAria')}
                 aria-expanded={commitMenuOpen}
-                disabled={busy}
+                // Same gate as the main face: nothing to commit means neither
+                // op in the menu is reachable, so the caret idles with it.
+                disabled={!canCommit || busy}
                 onClick={onToggleCommitMenu}
               >
                 ▾

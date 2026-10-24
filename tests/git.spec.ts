@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { join, normalize, resolve } from 'node:path'
 import {
-  addWorktree, addWorktreeCutout, appendWorktreeExclude, createBranch, cutoutBranchName, deleteBranch, fetchAll, inspectWorktree, probeRepo, probeWorkspaceGit, pushBranch, removeWorktree, renameBranch, switchBranch, updateBranch, WORKTREE_EXCLUDE_RULE,
+  addWorktree, addWorktreeCutout, appendWorktreeExclude, createBranch, cutoutBranchName, deleteBranch, fetchAll, inspectWorktree, NETWORK_TIMEOUT_MS, probeRepo, probeWorkspaceGit, pushBranch, removeWorktree, renameBranch, switchBranch, updateBranch, WORKTREE_EXCLUDE_RULE,
   type ExcludeSeams, type Exec, type ExecResult,
 } from '../src/git.ts'
 
@@ -426,6 +426,22 @@ describe('pushBranch', () => {
       { args: ['push'], out: { code: 1, errorMessage: 'spawn git ENOENT' } },
     ])
     await expect(pushBranch(exec, '/repo')).rejects.toThrow('spawn git ENOENT')
+  })
+
+  it('gives the push the wide network budget, not the local default', async () => {
+    // A slow-link push outruns the local 20s default, and a killed push may
+    // have already updated the remote refs — the error toast would fire for
+    // a push that actually landed.
+    const seen: Array<number | undefined> = []
+    const exec: Exec = async (_file, args, options) => {
+      seen.push(options.timeoutMs)
+      return { code: 0, stdout: 'abc\n', stderr: '' }
+    }
+    await pushBranch(exec, '/repo')
+    const pushCall = seen[1]
+    expect(pushCall).toBe(NETWORK_TIMEOUT_MS)
+    // The @{u} probe stays on the local default.
+    expect(seen[0]).toBeUndefined()
   })
 })
 
