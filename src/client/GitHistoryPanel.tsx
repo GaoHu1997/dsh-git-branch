@@ -21,6 +21,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useSta
 import { IconRefreshOutlineRegular, Toast } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { CommitEntry, CommitFileEntry, RepoStatus, WorktreeChange } from '../wire.ts'
 import { fetchStatus, requestAiCommitMessage, requestChanges, requestCommit, requestCommitFiles, requestCreateBranch, requestDeleteBranch, requestFetch, requestLog, requestPush, requestRenameBranch, requestStage, requestSwitch, requestUpdate } from './api.ts'
+import { emitGitMutated, onGitMutated } from './git-events.ts'
 import { appendPage, buildBranchRows, groupChanges, type BranchRow, type ChangeRow } from './git-panel-data.ts'
 import type { GitPanelTranslator, PanelHostContext, SessionModelSelection, SidebarTabScope } from './panel-types.ts'
 import { BranchSection } from './panel/BranchSection.tsx'
@@ -130,6 +131,13 @@ const GitHistoryPanelData = forwardRef<GitHistoryPanelDataHandle, {
     void loadAll()
   }, [loadAll])
 
+  // The composer chip owns the other half of the same repository: a chip
+  // checkout/rename reaches this panel only through the shared notice.
+  // Self-emitted events land here too — loadAll is an idempotent re-read
+  // guarded by the request sequence, so the echo costs one extra fetch
+  // and never a wrong snapshot.
+  useEffect(() => onGitMutated(refresh), [refresh])
+
   // The topbar refresh button sits in the page chrome while the loader lives
   // here; expose the verb upward through the handle.
   useImperativeHandle(ref, () => ({ refresh }), [refresh])
@@ -139,11 +147,14 @@ const GitHistoryPanelData = forwardRef<GitHistoryPanelDataHandle, {
   /** Run one mutating verb with the section-busy guard and error toast.
    * Mutations refresh through `loadAll` so their re-read bumps the request
    * sequence — an older in-flight snapshot can never land over the fresh
-   * post-mutation state. */
+   * post-mutation state. A SUCCESS also emits the cross-surface notice so
+   * the composer chip drops the branch git just left (stage toggles ride
+   * along — one extra idempotent /status beats per-verb wiring). */
   const runGuarded = useCallback(async (verb: () => Promise<void>): Promise<void> => {
     setSectionBusy(true)
     try {
       await verb()
+      emitGitMutated()
     } catch (error) {
       pushToast(t('errorGeneric', { message: failureText(error) }), 'error')
     } finally {
@@ -256,7 +267,10 @@ const GitHistoryPanelData = forwardRef<GitHistoryPanelDataHandle, {
       try {
         const result = await requestFetch(cwd)
         if (!result.ok) pushToast(t('errorGeneric', { message: result.error }), 'error')
-        else pushToast(t('fetchDone'), 'success')
+        else {
+          pushToast(t('fetchDone'), 'success')
+          emitGitMutated()
+        }
         await loadAll()
       } finally {
         setSyncBusy(false)
@@ -270,7 +284,10 @@ const GitHistoryPanelData = forwardRef<GitHistoryPanelDataHandle, {
       try {
         const result = await requestUpdate(cwd)
         if (!result.ok) pushToast(t('errorGeneric', { message: result.error }), 'error')
-        else pushToast(result.updated ? t('updateDone', { branch: result.branch }) : t('updateUpToDate'), 'success')
+        else {
+          pushToast(result.updated ? t('updateDone', { branch: result.branch }) : t('updateUpToDate'), 'success')
+          emitGitMutated()
+        }
         await loadAll()
       } finally {
         setSyncBusy(false)
@@ -284,7 +301,10 @@ const GitHistoryPanelData = forwardRef<GitHistoryPanelDataHandle, {
       try {
         const result = await requestPush(cwd)
         if (!result.ok) pushToast(t('errorGeneric', { message: result.error }), 'error')
-        else pushToast(result.pushed ? t('pushDone', { branch: result.branch }) : t('pushUpToDate'), 'success')
+        else {
+          pushToast(result.pushed ? t('pushDone', { branch: result.branch }) : t('pushUpToDate'), 'success')
+          emitGitMutated()
+        }
         await loadAll()
       } finally {
         setSyncBusy(false)

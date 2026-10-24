@@ -72,6 +72,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import { branchNameIssue, localBranchName } from '../normalize.ts'
 import type { BranchEntry, RepoStatus, WorktreeEntry } from '../wire.ts'
 import { fetchStatus, requestCreateBranch, requestDeleteBranch, requestFetch, requestInspectWorktree, requestPush, requestRenameBranch, requestSwitch, requestUpdate, requestWorktree, requestWorktreeCutout } from './api.ts'
+import { emitGitMutated, onGitMutated } from './git-events.ts'
 import { BranchMenu, type BranchRow } from './BranchMenu.tsx'
 import type { BranchChipInjected } from './slots.ts'
 import css from './BranchChip.module.css'
@@ -500,6 +501,17 @@ export function BranchChipDock({ sessionId, useSessions, useSession, adoptWorktr
     }
   }, [refresh])
 
+  // The GIT PANEL is a third pull point, and the one the focus pulls cannot
+  // cover: a panel checkout/rename/commit happens while this window stays
+  // focused, so without this notice the chip label keeps the branch git
+  // already left. busyRef gate shared with the focus pull.
+  useEffect(() => {
+    return onGitMutated(() => {
+      if (busyRef.current) return
+      void refresh()
+    })
+  }, [refresh])
+
   const showError = useCallback((message: string) => {
     pushToast(t('errorGeneric', { message }))
   }, [pushToast, t])
@@ -522,6 +534,9 @@ export function BranchChipDock({ sessionId, useSessions, useSession, adoptWorktr
     setConfirm(null)
     if (!keepOpen) setMenuOpen(false)
     onSettled?.()
+    // Mirror image of the panel's notice: a chip checkout/rename/commit
+    // must reach the panel's branch tree while the panel is open.
+    emitGitMutated()
   }, [showError])
 
   /** In-place switch flow: POST /switch, then refetch the status. */

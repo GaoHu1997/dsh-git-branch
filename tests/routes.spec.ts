@@ -453,6 +453,35 @@ describe('handleSwitch', () => {
   it('rejects unknown body keys', async () => {
     expect((await handleSwitch(deps(), { repoPath: '/repo', branch: 'main', why: true })).status).toBe(400)
   })
+
+  it('switches the session\u2019s own worktree, not the main checkout', async () => {
+    // The probe and `git switch` must both run inside the linked worktree;
+    // the old repoRoot target would have switched /repo instead. Every
+    // call is recorded, so the assertion can name the cwd it ran in.
+    const calls: Array<{ args: string[]; cwd: string }> = []
+    // `dev` must exist in the branch list the linked worktree's probe reads:
+    // resolveBranch refuses an unknown name before any `git switch` runs.
+    const table = {
+      ...LINKED_CALLS,
+      'for-each-ref refs/heads': { stdout: 'main\nfeat/x\ndev\n' },
+      'switch dev': {},
+    } as Record<string, Partial<ExecResult>>
+    const exec: Exec = async (_file, args, options) => {
+      calls.push({ args, cwd: options.cwd })
+      const key = args.join(' ')
+      const entry = Object.entries(table).find(([prefix]) => key === prefix || key.startsWith(prefix))
+      if (entry === undefined) throw new Error(`unexpected git call: git ${key}`)
+      return { code: 0, stdout: '', stderr: '', ...entry[1] }
+    }
+    const outcome = await handleSwitch(deps({ exec }), { repoPath: '/root/repo/feat-x', branch: 'dev' })
+    expect(outcome).toEqual({ status: 200, body: { branch: 'dev' } })
+    const switching = calls.filter(call => call.args.join(' ') === 'switch dev')
+    // Compare the tail segments only: the git layer hands git a
+    // platform-native path (drive letter and all on Windows), while what
+    // the test must pin is WHICH checkout moved — feat-x, never /repo.
+    expect(switching).toHaveLength(1)
+    expect(normalize(switching[0]?.cwd ?? '').replace(/\\/g, '/').endsWith('root/repo/feat-x')).toBe(true)
+  })
 })
 
 describe('handleCreateBranch', () => {

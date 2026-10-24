@@ -441,26 +441,28 @@ export async function addWorktreeCutout(
 }
 
 /**
- * In-place branch switch of the main checkout. A remote display name relies
+ * In-place branch switch of one checkout. A remote display name relies
  * on git's dwim: `git switch <local>` creates the tracking branch when
  * exactly one remote has it.
  * @param exec - executor seam.
- * @param repoRoot - main worktree directory.
+ * @param checkoutDir - the directory whose OWN checkout moves: the queried
+ * session's toplevel, so a linked worktree switches itself rather than the
+ * main checkout. `worktree prune` still runs here (it is repo-wide).
  * @param branch - branch display name.
  * @returns the local branch name now checked out.
  */
-export async function switchBranch(exec: Exec, repoRoot: string, branch: string): Promise<string> {
-  const resolved = await resolveBranch(exec, repoRoot, branch)
+export async function switchBranch(exec: Exec, checkoutDir: string, branch: string): Promise<string> {
+  const resolved = await resolveBranch(exec, checkoutDir, branch)
   if (resolved === undefined) throw new GitError(['switch'], 1, `branch "${branch}" not found`)
   try {
-    await git(exec, repoRoot, ['switch', resolved.local])
+    await git(exec, checkoutDir, ['switch', resolved.local])
   } catch (error) {
     // A stale worktree registration claims the branch; prune (no-op on a
     // healthy repo) and retry once — a live worktree still refuses, as it must.
     const stale = error instanceof GitError && error.stderr.includes('already used by worktree')
     if (!stale) throw error
-    await git(exec, repoRoot, ['worktree', 'prune'])
-    await git(exec, repoRoot, ['switch', resolved.local])
+    await git(exec, checkoutDir, ['worktree', 'prune'])
+    await git(exec, checkoutDir, ['switch', resolved.local])
   }
   return resolved.local
 }

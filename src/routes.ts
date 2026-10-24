@@ -509,7 +509,12 @@ export async function handleCreateWorktree(deps: RouteDeps, body: unknown): Prom
 }
 
 /**
- * POST /switch 鈥?in-place branch switch of the main checkout.
+ * POST /switch — in-place branch switch of the QUERIED directory's own
+ * checkout. A main-checkout session switches the main checkout; a linked
+ * worktree session switches ITS worktree. (It used to always run in the
+ * main checkout: a worktree session's checkout appeared to succeed while its
+ * own branch never moved. git itself refuses a branch another worktree
+ * holds — an honest error beats moving a checkout nobody was looking at.)
  * @param deps - host dependencies.
  * @param body - parsed request body.
  */
@@ -522,7 +527,7 @@ export async function handleSwitch(deps: RouteDeps, body: unknown): Promise<Rout
   try {
     const facts = await probeRepo(deps.exec, repoPath, deps.dirExists)
     if (facts === undefined) return fail(400, `"${repoPath}" is not inside a git repository`)
-    const switched = await switchBranch(deps.exec, facts.repoRoot, branch)
+    const switched = await switchBranch(deps.exec, facts.toplevel, branch)
     const result: SwitchResult = { branch: switched }
     return { status: 200, body: result }
   } catch (error) {

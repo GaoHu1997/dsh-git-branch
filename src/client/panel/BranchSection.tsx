@@ -1,14 +1,16 @@
 /**
  * BranchSection: the panel's middle block — the branch list with an IDEA-style
- * action menu. Clicking any row opens a small menu anchored to it (checkout,
- * new branch from here, rename, delete, copy name — remote rows narrow it to
- * the actions a remote branch can take); the CURRENT branch's menu hides only
- * checkout and delete, so rename/new-from/copy stay reachable. Rename and
- * create run through the Modal primitive with the same client-side name
- * validation the composer chip applies; delete confirms first and always uses
- * the safe `-d` form (git refuses unmerged). Presentational: every action
- * arrives as a callback; the menu/dialog state is local and resets when the
- * branch list identity changes.
+ * action menu. RIGHT-CLICKING any row opens a small menu anchored to it
+ * (checkout, new branch from here, rename, delete, copy name — remote rows
+ * narrow it to the actions a remote branch can take); the CURRENT branch's
+ * menu hides only checkout and delete, so rename/new-from/copy stay
+ * reachable. Keyboard rows keep Enter/Space as the menu opener — a context
+ * menu has no keyboard twin. Rename and create run through the Modal
+ * primitive with the same client-side name validation the composer chip
+ * applies; delete confirms first and always uses the safe `-d` form (git
+ * refuses unmerged). Presentational: every action arrives as a callback; the
+ * menu/dialog state is local and resets when the branch list identity
+ * changes.
  *
  * The tree opens on 本地 only (the current branch lives there) and the card
  * takes one share of the panel's fixed 2:1:2 split (its body scrolls inside
@@ -256,7 +258,7 @@ export function BranchSection(props: BranchSectionProps): JSX.Element {
         : t('createFlyAsk')
 
   // Two IDEA-style trees: 本地 → branches, 远程 → per-remote → branches.
-  // Group headers toggle collapse; rows open the action menu on click.
+  // Group headers toggle collapse; rows open the action menu on right-click.
   const groupHead = (key: string, label: string, count: number, nested: boolean): JSX.Element => (
     <div
       className={`${css.treeHead} ${nested ? css.treeHeadNest : ''}`}
@@ -288,7 +290,12 @@ export function BranchSection(props: BranchSectionProps): JSX.Element {
       data-current={row.current ? 'true' : undefined}
       role="button"
       tabIndex={0}
-      onClick={event => openMenu(row, event)}
+      onContextMenu={event => {
+        // IDEA posture: the action menu is a context menu — suppress the
+        // browser's own and anchor ours to the row.
+        event.preventDefault()
+        openMenu(row, event)
+      }}
       onKeyDown={event => {
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault()
