@@ -4,6 +4,9 @@
  * the draft, and every action arrive as props from the panel state owner, so
  * this file renders and never talks to git itself.
  *
+ * The file lists scroll inside a height cap of their own while the commit box
+ * stays below them — a 500-change tree must not bury the commit affordance.
+ *
  * The commit affordance is a split button: the main face commits, the caret
  * opens the two op variants (commit; commit and push). The AI button fills
  * the draft from the host's one-shot llm route — it renders only when the
@@ -147,28 +150,32 @@ export function UncommittedSection(props: UncommittedSectionProps): JSX.Element 
       <div className={css.sectionBody}>
         {total === 0 ? <p className={css.empty}>{t('panel.clean')}</p> : null}
         {truncated ? <p className={css.empty}>{t('panel.changesTruncated')}</p> : null}
-        {staged.length > 0 ? (
-          <div>
-            <div className={css.groupTitleRow}>
-              {t('panel.staged')}
-              <span className={css.countBadge}>{String(staged.length)}</span>
-              <button type="button" className={css.linkBtn} disabled={busy} onClick={onUnstageAll}>{t('panel.unstageAll')}</button>
-            </div>
-            {staged.map(row => (
-              <ChangeRowView key={`${row.staged}:${row.path}:${row.oldPath ?? ''}`} row={row} disabled={busy} onToggle={onToggleRow} t={t} />
-            ))}
-          </div>
-        ) : null}
-        {unstaged.length > 0 ? (
-          <div>
-            <div className={css.groupTitleRow}>
-              {t('panel.unstaged')}
-              <span className={css.countBadge}>{String(unstaged.length)}</span>
-              <button type="button" className={css.linkBtn} disabled={busy} onClick={onStageAll}>{t('panel.stageAll')}</button>
-            </div>
-            {unstaged.map(row => (
-              <ChangeRowView key={`u:${row.path}:${row.oldPath ?? ''}`} row={row} disabled={busy} onToggle={onToggleRow} t={t} />
-            ))}
+        {total > 0 ? (
+          <div className={css.changeList}>
+            {staged.length > 0 ? (
+              <div>
+                <div className={css.groupTitleRow}>
+                  {t('panel.staged')}
+                  <span className={css.countBadge}>{String(staged.length)}</span>
+                  <button type="button" className={css.linkBtn} disabled={busy} onClick={onUnstageAll}>{t('panel.unstageAll')}</button>
+                </div>
+                {staged.map(row => (
+                  <ChangeRowView key={`${row.staged}:${row.path}:${row.oldPath ?? ''}`} row={row} disabled={busy} onToggle={onToggleRow} t={t} />
+                ))}
+              </div>
+            ) : null}
+            {unstaged.length > 0 ? (
+              <div>
+                <div className={css.groupTitleRow}>
+                  {t('panel.unstaged')}
+                  <span className={css.countBadge}>{String(unstaged.length)}</span>
+                  <button type="button" className={css.linkBtn} disabled={busy} onClick={onStageAll}>{t('panel.stageAll')}</button>
+                </div>
+                {unstaged.map(row => (
+                  <ChangeRowView key={`u:${row.path}:${row.oldPath ?? ''}`} row={row} disabled={busy} onToggle={onToggleRow} t={t} />
+                ))}
+              </div>
+            ) : null}
           </div>
         ) : null}
         <div className={css.commitBox}>

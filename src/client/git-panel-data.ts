@@ -166,3 +166,10 @@ export function groupRemotes(remotes: readonly BranchRow[]): RemoteGroup[] {
     .map(([remote, branches]) => ({ remote, branches }))
     .sort((left, right) => left.remote.localeCompare(right.remote))
 }
+
+/** Every group key the branch tree renders — the collapse-all target set.
+ * The bare `remote` key folds the whole remote tree; the nested
+ * `remote:<name>` keys matter only for the groups it re-opens. */
+export function branchGroupKeys(remotes: readonly BranchRow[]): string[] {
+  return ['local', 'remote', ...groupRemotes(remotes).map(group => `remote:${group.remote}`)]
+}

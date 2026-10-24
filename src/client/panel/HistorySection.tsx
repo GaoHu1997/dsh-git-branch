@@ -207,7 +207,7 @@ export function HistorySection(props: HistorySectionProps): JSX.Element {
           />
         </div>
       </div>
-      <div className={css.sectionBody}>
+      <div className={`${css.sectionBody} ${css.historyBody}`}>
         {loadError !== undefined ? <div className={css.errorText}>{loadError}</div>
           : !loaded && loading ? <div className={css.empty}>{t('manager.loading')}</div>
             : visible.length === 0 ? <div className={css.empty}>{needle === '' ? t('panel.noCommits') : t('panel.noMatches')}</div>

@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { filterCommits, groupChanges, groupRemotes } from '../src/client/git-panel-data.ts'
+import { branchGroupKeys, filterCommits, groupChanges, groupRemotes } from '../src/client/git-panel-data.ts'
 import type { CommitEntry, WorktreeChange } from '../src/wire.ts'
 
 describe('groupChanges', () => {
@@ -76,5 +76,18 @@ describe('groupRemotes', () => {
       { name: 'origin', kind: 'remote', current: false },
     ])
     expect(groups.map(group => group.remote)).toEqual(['origin', 'upstream'])
+  })
+})
+
+describe('branchGroupKeys', () => {
+  it('lists every group key the tree renders, nested remotes prefixed', () => {
+    expect(branchGroupKeys([
+      { name: 'origin/main', kind: 'remote', current: false },
+      { name: 'upstream/dev', kind: 'remote', current: false },
+    ])).toEqual(['local', 'remote', 'remote:origin', 'remote:upstream'])
+  })
+
+  it('degrades to the two root groups without remotes', () => {
+    expect(branchGroupKeys([])).toEqual(['local', 'remote'])
   })
 })

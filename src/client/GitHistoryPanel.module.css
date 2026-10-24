@@ -168,6 +168,45 @@
   gap: 8px;
 }
 
+/* Height caps: every card keeps its own body in check, so one busy card
+ * (a branch-heavy repo, a 500-change tree, a long history) can no longer
+ * push the cards below it off screen — the body scrolls internally and the
+ * outer column only scrolls past the sum of the caps. */
+.branchBody,
+.historyBody {
+  max-height: 40vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.changeList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 30vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* The 全部展开/全部折叠 text chips in the branch card head. */
+.treeToggle {
+  background: none;
+  border: 0;
+  padding: 2px 5px;
+  font: inherit;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  border-radius: 5px;
+  white-space: nowrap;
+}
+
+.treeToggle:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-brand-primary);
+}
+
 /* Small action chip used across the section heads and the commit row. */
 .act {
   display: inline-flex;

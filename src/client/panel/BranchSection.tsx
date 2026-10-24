@@ -10,6 +10,12 @@
  * arrives as a callback; the menu/dialog state is local and resets when the
  * branch list identity changes.
  *
+ * The tree opens on 本地 only (the current branch lives there) and the card
+ * body scrolls past a height cap, so a branch-heavy repository can no longer
+ * push the other cards off screen. 全部展开/全部折叠 drive every group at
+ * once, and after a checkout (or expand-all) the card re-centers on the
+ * current branch row.
+ *
  * @module git-worktree/client/panel/BranchSection
  */
 
@@ -19,7 +25,7 @@ import { createPortal } from 'react-dom'
 import { Button, IconCheckOutlineRegular, IconChevronDownOutlineRegular, IconChevronRightOutlineRegular, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { BranchRow } from '../git-panel-data.ts'
 import { branchNameIssue } from '../../normalize.ts'
-import { groupRemotes } from '../git-panel-data.ts'
+import { branchGroupKeys, groupRemotes } from '../git-panel-data.ts'
 import type { GitPanelTranslator } from '../panel-types.ts'
 import css from '../GitHistoryPanel.module.css'
 
@@ -34,6 +40,12 @@ interface BranchDialogState {
   kind: 'rename' | 'new' | 'new-from' | 'delete'
   branch?: BranchRow
 }
+
+/** Groups folded when the card mounts: the remote tree only. The current
+ * branch lives at the TOP of the local group (buildBranchRows sorts it
+ * first), so 本地 stays open — the card opens showing what the panel is
+ * about, without the wall of remote branches. */
+const COLLAPSED_ON_MOUNT: ReadonlySet<string> = new Set(['remote'])
 
 /** Track branch-row clicks on this list; the callback receives the row and
  * its viewport rect so the portal can anchor the menu. */
@@ -128,7 +140,16 @@ export function BranchSection(props: BranchSectionProps): JSX.Element {
   const [menu, setMenu] = useState<BranchMenuState | null>(null)
   const [dialog, setDialog] = useState<BranchDialogState | null>(null)
   const [draft, setDraft] = useState('')
-  const [collapsedGroups, setCollapsedGroups] = useState<ReadonlySet<string>>(new Set())
+  const [collapsedGroups, setCollapsedGroups] = useState<ReadonlySet<string>>(COLLAPSED_ON_MOUNT)
+
+  /** The card's scroll body — the locate math centers rows inside it. */
+  const bodyRef = useRef<HTMLDivElement | null>(null)
+  /** The current branch this mount last centered on. A refresh re-centers
+   * only when the checkout moved; a same-branch refresh (stage, commit…)
+   * keeps the scroll where the user left it. */
+  const locatedRef = useRef<string | null>(null)
+  /** Expand-all asks for one more locate — its rows mount on the next commit. */
+  const pendingLocateRef = useRef(false)
 
   const toggleGroup = (key: string): void => {
     setCollapsedGroups(prev => {
@@ -138,6 +159,40 @@ export function BranchSection(props: BranchSectionProps): JSX.Element {
       return next
     })
   }
+
+  const expandAll = (): void => {
+    pendingLocateRef.current = true
+    setCollapsedGroups(new Set())
+  }
+
+  const collapseAll = (): void => {
+    setCollapsedGroups(new Set(branchGroupKeys(remotes)))
+  }
+
+  /** Center the current branch row in the card body (no scroll when the
+   * body is shorter than its cap). Rect arithmetic, not offsetTop: no
+   * positioned ancestor is guaranteed between the row and the body. */
+  const locateCurrent = (): void => {
+    const body = bodyRef.current
+    if (body === null) return
+    const row = body.querySelector('[data-current="true"]')
+    if (!(row instanceof HTMLElement)) return
+    const top = row.getBoundingClientRect().top - body.getBoundingClientRect().top + body.scrollTop
+    body.scrollTop = Math.max(0, top - (body.clientHeight - row.offsetHeight) / 2)
+  }
+
+  // After every commit (no dep array — expand-all and checkouts land through
+  // different states): center the card on the current branch when the
+  // checkout moved or expand-all explicitly asked, and only when the row is
+  // actually rendered (its group open).
+  useLayoutEffect(() => {
+    const current = locals.find(row => row.current)?.name
+    if (current === undefined) return
+    if (!pendingLocateRef.current && current === locatedRef.current) return
+    pendingLocateRef.current = false
+    locatedRef.current = current
+    locateCurrent()
+  })
 
   const total = locals.length + remotes.length
 
@@ -230,6 +285,7 @@ export function BranchSection(props: BranchSectionProps): JSX.Element {
     <div
       key={row.name}
       className={`${css.branchRow} ${row.current ? css.branchRowCurrent : ''}`}
+      data-current={row.current ? 'true' : undefined}
       role="button"
       tabIndex={0}
       onClick={event => openMenu(row, event)}
@@ -258,13 +314,16 @@ export function BranchSection(props: BranchSectionProps): JSX.Element {
     <section className={css.section} aria-label={t('panel.branches')}>
       <div className={css.sectionHead}>
         <h2 className={css.sectionTitle}>{t('panel.branches')}</h2>
+        {total > 0 ? <span className={css.countBadge}>{String(total)}</span> : null}
         <div className={css.sectionTools}>
+          <button type="button" className={css.treeToggle} onClick={expandAll}>{t('menuExpandAll')}</button>
+          <button type="button" className={css.treeToggle} onClick={collapseAll}>{t('menuCollapseAll')}</button>
           <button type="button" className={css.act} disabled={busy} onClick={() => openDialog('new')}>
             + {t('panel.branchNew')}
           </button>
         </div>
       </div>
-      <div className={css.sectionBody}>
+      <div className={`${css.sectionBody} ${css.branchBody}`} ref={bodyRef}>
         {total === 0 ? <p className={css.empty}>{t('menuNoBranches')}</p> : null}
         {locals.length > 0 ? (
           <div>
