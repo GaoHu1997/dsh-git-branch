@@ -11,10 +11,10 @@
  * branch list identity changes.
  *
  * The tree opens on 本地 only (the current branch lives there) and the card
- * body scrolls past a height cap, so a branch-heavy repository can no longer
- * push the other cards off screen. 全部展开/全部折叠 drive every group at
- * once, and after a checkout (or expand-all) the card re-centers on the
- * current branch row.
+ * takes one fixed share of the panel height (its body scrolls inside it), so
+ * a branch-heavy repository can no longer push the other cards off screen.
+ * 全部展开/全部折叠 drive every group at once, and after a checkout (or
+ * expand-all) the card re-centers on the current branch row.
  *
  * @module git-worktree/client/panel/BranchSection
  */
@@ -311,7 +311,7 @@ export function BranchSection(props: BranchSectionProps): JSX.Element {
   )
 
   return (
-    <section className={css.section} aria-label={t('panel.branches')}>
+    <section className={`${css.section} ${css.sectionFill}`} aria-label={t('panel.branches')}>
       <div className={css.sectionHead}>
         <h2 className={css.sectionTitle}>{t('panel.branches')}</h2>
         {total > 0 ? <span className={css.countBadge}>{String(total)}</span> : null}
@@ -323,7 +323,7 @@ export function BranchSection(props: BranchSectionProps): JSX.Element {
           </button>
         </div>
       </div>
-      <div className={`${css.sectionBody} ${css.branchBody}`} ref={bodyRef}>
+      <div className={`${css.sectionBody} ${css.sectionBodyScroll}`} ref={bodyRef}>
         {total === 0 ? <p className={css.empty}>{t('menuNoBranches')}</p> : null}
         {locals.length > 0 ? (
           <div>

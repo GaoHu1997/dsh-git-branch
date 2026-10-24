@@ -192,7 +192,7 @@ export function HistorySection(props: HistorySectionProps): JSX.Element {
   const visible = filterCommits(commits, query)
 
   return (
-    <section className={css.section} aria-label={t('panel.history')}>
+    <section className={`${css.section} ${css.sectionFill}`} aria-label={t('panel.history')}>
       <div className={css.historyHead}>
         <h2 className={css.sectionTitle}>{t('panel.history')}</h2>
         <div className={css.searchBox}>
@@ -207,7 +207,7 @@ export function HistorySection(props: HistorySectionProps): JSX.Element {
           />
         </div>
       </div>
-      <div className={`${css.sectionBody} ${css.historyBody}`}>
+      <div className={`${css.sectionBody} ${css.sectionBodyScroll}`}>
         {loadError !== undefined ? <div className={css.errorText}>{loadError}</div>
           : !loaded && loading ? <div className={css.empty}>{t('manager.loading')}</div>
             : visible.length === 0 ? <div className={css.empty}>{needle === '' ? t('panel.noCommits') : t('panel.noMatches')}</div>

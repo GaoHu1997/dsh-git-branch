@@ -4,8 +4,9 @@
  * the draft, and every action arrive as props from the panel state owner, so
  * this file renders and never talks to git itself.
  *
- * The file lists scroll inside a height cap of their own while the commit box
- * stays below them — a 500-change tree must not bury the commit affordance.
+ * The card takes two shares of the panel's fixed 2:1:1 split: the file lists
+ * scroll inside their own region while the commit box stays pinned below —
+ * a 500-change tree must not bury the commit affordance.
  *
  * The commit affordance is a split button: the main face commits, the caret
  * opens the two op variants (commit; commit and push). The AI button fills
@@ -128,7 +129,7 @@ export function UncommittedSection(props: UncommittedSectionProps): JSX.Element 
   const aiReady = aiAvailable && total > 0
 
   return (
-    <section className={css.section} aria-label={t('panel.uncommitted')}>
+    <section className={`${css.section} ${css.sectionFill} ${css.sectionChanges}`} aria-label={t('panel.uncommitted')}>
       <div className={css.sectionHead}>
         <h2 className={css.sectionTitle}>{t('panel.uncommitted')}</h2>
         {total > 0 ? <span className={css.countBadge}>{String(total)}</span> : null}

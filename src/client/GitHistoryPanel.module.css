@@ -114,18 +114,30 @@
   gap: 10px;
 }
 
-/* Sections NEVER flex-shrink: the scroll container is a definite-height
- * flex column, and a shrinkable child collapses to a fraction of its
- * content while the overflow paints over the following sections (the
- * branch section went empty and the commit box drifted into the history).
- * Natural heights; the container scrolls as a whole. */
+/* The page column below the topbar is a definite-height flex column and the
+ * three cards split it 2:1:1 (uncommitted : branches : history); the topbar
+ * and the gaps are the fifth share. Each body scrolls INSIDE its share —
+ * min-height: 0 is what lets a flex child shrink below its content (the old
+ * natural-height model painted overflowing rows over the sections below).
+ * A floor keeps a very short panel from collapsing a card to its bare head;
+ * past the floor the column itself scrolls. */
 .section {
-  flex: none;
   border: 0.5px solid var(--dsw-alias-border-l2);
   border-radius: 10px;
   background: var(--dsw-alias-bg-layer-2);
   display: flex;
   flex-direction: column;
+  min-height: 0;
+}
+
+.sectionFill {
+  flex: 1 1 0;
+  min-height: 84px;
+}
+
+/* The uncommitted card takes two of the shares. */
+.sectionChanges {
+  flex-grow: 2;
 }
 
 .sectionHead {
@@ -166,24 +178,24 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
-/* Height caps: every card keeps its own body in check, so one busy card
- * (a branch-heavy repo, a 500-change tree, a long history) can no longer
- * push the cards below it off screen — the body scrolls internally and the
- * outer column only scrolls past the sum of the caps. */
-.branchBody,
-.historyBody {
-  max-height: 40vh;
+/* The branch and history bodies scroll as a whole inside their share. */
+.sectionBodyScroll {
   overflow-y: auto;
   overscroll-behavior: contain;
 }
 
+/* Inside the uncommitted card only the file lists scroll; the commit box
+ * below stays pinned however long the change tree is. */
 .changeList {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-height: 30vh;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -344,6 +356,7 @@
   flex-direction: column;
   gap: 8px;
   margin-top: 4px;
+  flex: none;
 }
 
 .commitInput {
