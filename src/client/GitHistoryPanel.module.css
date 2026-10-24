@@ -1,0 +1,835 @@
+/* Git panel (sidebar global panel). Three stacked sections over the main
+ * column: uncommitted changes + commit box, branches, commit history. Host
+ * tokens only; the few status colors fall back to the same literals the
+ * settings card uses. */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px 8px;
+}
+
+.back {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-secondary);
+  padding: 4px 8px;
+  border-radius: 8px;
+}
+
+.back:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+
+.repoPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--dsw-alias-label-secondary);
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: 999px;
+  padding: 3px 10px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.repoName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.branchName {
+  color: var(--dsw-alias-label-primary);
+  font-weight: 500;
+}
+
+.track {
+  font-variant-numeric: tabular-nums;
+}
+
+.topbarActions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+
+.refreshBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+
+.refreshBtn:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.refreshBtn[disabled] {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Sections NEVER flex-shrink: the scroll container is a definite-height
+ * flex column, and a shrinkable child collapses to a fraction of its
+ * content while the overflow paints over the following sections (the
+ * branch section went empty and the commit box drifted into the history).
+ * Natural heights; the container scrolls as a whole. */
+.section {
+  flex: none;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-layer-2);
+  display: flex;
+  flex-direction: column;
+}
+
+.sectionHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l2);
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+
+.countBadge {
+  font-size: 10px;
+  line-height: 1;
+  border-radius: 999px;
+  padding: 3px 7px;
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.sectionTools {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sectionBody {
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Small action chip used across the section heads and the commit row. */
+.act {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-primary);
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: 7px;
+  padding: 4px 10px;
+  white-space: nowrap;
+}
+
+.act:hover:not([disabled]) {
+  border-color: var(--dsw-alias-brand-primary);
+}
+
+.act[disabled] {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.actPrimary {
+  /* Hardcoded blue by request — the brand token does not resolve reliably
+   * inside the better-sidebar panel. */
+  background: #4c6bf5;
+  border-color: transparent;
+  color: #fff;
+}
+
+.actPrimary:hover:not([disabled]) {
+  border-color: transparent;
+  filter: brightness(1.06);
+}
+
+/* Uncommitted changes */
+
+.groupTitleRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.linkBtn {
+  margin-left: auto;
+  background: none;
+  border: 0;
+  padding: 2px 4px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--dsw-alias-brand-primary);
+  cursor: pointer;
+  border-radius: 5px;
+}
+
+.linkBtn:hover:not([disabled]) {
+  text-decoration: underline;
+}
+
+.linkBtn[disabled] {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.changeRow {
+  display: grid;
+  grid-template-columns: 16px 18px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 3px 6px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.changeRow:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.changeCheck {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--dsw-alias-brand-primary);
+  cursor: pointer;
+  margin: 0;
+}
+
+.statusBadge {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  font-size: 10px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  color: #fff;
+  box-sizing: border-box;
+}
+
+.statusA { background: var(--dsw-alias-status-success, #218358); }
+.statusM { background: var(--dsw-alias-label-warning, #b07000); }
+.statusD { background: var(--dsw-alias-status-danger, #d5304f); }
+.statusR { background: #8350d8; }
+.statusC { background: #8350d8; }
+.statusT { background: #5b7a9d; }
+.statusQ { background: var(--dsw-alias-label-dimmed, #9aa0aa); }
+.statusU { background: #d5502e; }
+
+.changePath {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11.5px;
+  direction: rtl;
+  text-align: left;
+}
+
+.stageHint {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  flex: none;
+}
+
+.commitBox {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.commitInput {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 52px;
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.5;
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: 8px;
+  padding: 7px 10px;
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-primary);
+  outline: none;
+}
+
+.commitInput:focus {
+  border-color: var(--dsw-alias-brand-primary);
+}
+
+.commitActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.commitHint {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  min-height: 16px;
+}
+
+.split {
+  margin-left: auto;
+  display: flex;
+  position: relative;
+}
+
+.splitMain {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  padding: 6px 16px;
+  font-size: 13px;
+}
+
+.splitCaret {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  margin-left: 1px;
+  padding: 6px 6px;
+}
+
+.menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 40;
+  width: max-content;
+  min-width: 0;
+  background: var(--dsw-alias-surface-raised, var(--dsw-alias-bg-layer-3));
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: 8px;
+  box-shadow: var(--dsw-shadow-lv3);
+  backdrop-filter: var(--dsw-menu-backdrop-filter);
+  padding: 3px;
+  display: flex;
+  flex-direction: column;
+}
+
+.menuItem {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 0;
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 5px 10px;
+  border-radius: 5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.menuItem:hover:not([disabled]) {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.menuItem[disabled] {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.menuSub {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  margin-top: 1px;
+}
+
+/* Branch section — two IDEA-style trees: 本地 → branches, 远程 → per-remote → branches */
+
+.treeHead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-secondary);
+  user-select: none;
+}
+
+.treeHead:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.treeChevron {
+  display: inline-flex;
+  align-items: center;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.treeChildren {
+  display: flex;
+  flex-direction: column;
+  margin-left: 12px;
+}
+
+.treeHeadNest {
+  font-weight: 400;
+}
+
+.treeNest {
+  margin-left: 12px;
+}
+
+.branchRow {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 5px 8px;
+  border-radius: 7px;
+  cursor: pointer;
+  font-size: 12.5px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.branchRow:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.branchRowCurrent {
+  background: var(--dsw-alias-bg-layer-3);
+  cursor: default;
+}
+
+.branchRowCurrent:hover {
+  background: var(--dsw-alias-bg-layer-3);
+}
+
+.branchMark {
+  color: var(--dsw-alias-brand-primary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.branchName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.branchKind {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 10px;
+  margin-left: 6px;
+}
+
+.branchTrack {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+
+/* The branch action menu is portaled; fixed positioning by row rect. */
+.floatMenu {
+  position: fixed;
+  z-index: 60;
+  min-width: 190px;
+}
+
+.menuHead {
+  padding: 6px 10px 5px;
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+  border-bottom: 0.5px solid var(--dsw-alias-border-l2);
+  margin-bottom: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.menuHeadStrong {
+  color: var(--dsw-alias-label-primary);
+  font-weight: 500;
+}
+
+.menuDanger {
+  color: var(--dsw-alias-status-danger, #d5304f);
+}
+
+.formField {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.formLabel {
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.formInput {
+  font: inherit;
+  font-size: 13px;
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: 8px;
+  padding: 7px 10px;
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-primary);
+  outline: none;
+}
+
+.formInput:focus {
+  border-color: var(--dsw-alias-brand-primary);
+}
+
+.formError {
+  font-size: 12px;
+  color: var(--dsw-alias-status-danger, #d5304f);
+  min-height: 16px;
+}
+
+/* Commit history */
+
+.historyHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l2);
+}
+
+.searchBox {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  max-width: 300px;
+  min-width: 140px;
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: 7px;
+  padding: 0 9px;
+  height: 28px;
+  color: var(--dsw-alias-label-tertiary);
+  background: var(--dsw-alias-bg-layer-3);
+}
+
+.searchInput {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  outline: none;
+  font: inherit;
+  font-size: 12px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.searchInput::placeholder {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.commitRow {
+  position: relative;
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 8px 6px 2px;
+  cursor: pointer;
+  border-radius: 7px;
+}
+
+.commitRow:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.commitRowOpen {
+  background: var(--dsw-alias-bg-layer-3);
+}
+
+.commitRowOpen:hover {
+  background: var(--dsw-alias-bg-layer-3);
+}
+
+.commitGraph {
+  position: relative;
+  align-self: stretch;
+  min-height: 34px;
+}
+
+.commitGraph::before {
+  content: "";
+  position: absolute;
+  left: 10px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--dsw-alias-border-l2);
+}
+
+.commitRowFirst .commitGraph::before {
+  top: 50%;
+}
+
+.commitRowLast .commitGraph::before {
+  bottom: 50%;
+}
+
+.commitDot {
+  position: absolute;
+  left: 5px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--dsw-alias-brand-primary);
+  border: 3px solid var(--dsw-alias-bg-layer-2);
+  box-sizing: content-box;
+  margin-left: -3px;
+}
+
+.commitDotMerge {
+  background: #8350d8;
+}
+
+.commitMain {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.commitSubject {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.commitSubjectText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.commitRowOpen .commitSubjectText {
+  font-weight: 600;
+}
+
+.refBadges {
+  display: inline-flex;
+  gap: 4px;
+  flex: none;
+}
+
+.refBadge {
+  font-size: 10px;
+  line-height: 1;
+  border-radius: 4px;
+  padding: 3px 5px;
+  font-weight: 500;
+  white-space: nowrap;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.refHead {
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-primary-bluish);
+  border: 0.5px solid var(--dsw-alias-border-l4);
+}
+
+.refTag {
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-warning, #b07000);
+  border: 0.5px solid var(--dsw-alias-border-l4);
+}
+
+.refRemote {
+  background: var(--dsw-alias-bg-layer-3);
+  color: #8350d8;
+  border: 0.5px solid var(--dsw-alias-border-l4);
+}
+
+.refLocal {
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-status-success, #218358);
+  border: 0.5px solid var(--dsw-alias-border-l4);
+}
+
+.commitMeta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11.5px;
+}
+
+.authorDot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--dsw-alias-brand-primary);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  flex: none;
+}
+
+.commitSide {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11.5px;
+  flex: none;
+}
+
+.commitHash {
+  font-family: ui-monospace, Consolas, monospace;
+}
+
+.commitExpand {
+  grid-column: 1 / -1;
+  padding: 2px 4px 8px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.commitExpandTitle {
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+  margin-bottom: 3px;
+}
+
+.fileRow {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 3px 6px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.fileRow:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.filePath {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11.5px;
+  direction: rtl;
+  text-align: left;
+}
+
+.fileNums {
+  font-variant-numeric: tabular-nums;
+  color: var(--dsw-alias-label-tertiary);
+  flex: none;
+}
+
+.fileAdd { color: var(--dsw-alias-status-success, #218358); }
+.fileDel { color: var(--dsw-alias-status-danger, #d5304f); }
+
+.empty {
+  padding: 28px 16px;
+  text-align: center;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12.5px;
+}
+
+.errorText {
+  padding: 20px 16px;
+  text-align: center;
+  color: var(--dsw-alias-status-danger, #d5304f);
+  font-size: 12.5px;
+}
+
+.moreRow {
+  display: flex;
+  justify-content: center;
+  padding: 8px 0 2px;
+}

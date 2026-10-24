@@ -13,8 +13,22 @@ import { ROUTE_EXISTS, ROUTE_REMOVE } from '../src/wire.ts'
  * under `plugins.bundle.config`, registered only while the shared describe
  * face reports the `dsh-git-branch` Host entry as served.
  */
-class FakeCtx {
-  readonly locale = { register: (ns: string, dict: unknown) => { this.namespaces.push([ns, dict]) } }
+export class FakeCtx {
+  /** Services available to `ctx.inject` resolution (the panel's
+   * better-sidebar dependency is added by the tests that need it). */
+  readonly services = new Set<string>()
+  /** Cordis inject: run the callback immediately when every dependency is
+   * provided, never otherwise (the wait semantics of the real one). */
+  inject(deps: readonly string[], callback: (ctx: FakeCtx) => void): () => void {
+    if (deps.every(dep => this.services.has(dep))) callback(this)
+    return () => {}
+  }
+  /** The better-sidebar service stub (captured registrations) when present. */
+  betterSidebar: { registerTab(descriptor: Record<string, unknown>): () => void } | undefined
+  readonly locale = {
+    register: (ns: string, dict: unknown) => { this.namespaces.push([ns, dict]) },
+    bind: (_ns: string) => (key: string) => key,
+  }
   readonly namespaces: Array<[string, unknown]> = []
   readonly registered: Array<{ options: Record<string, unknown>; component: unknown }> = []
   /** Workspace rows the list snapshot serves (pathKey-matched by takers). */
@@ -48,10 +62,22 @@ class FakeCtx {
       getSnapshot: () => ({ items: this.workspaceItems, archivedSessionIds: this.archivedSessionIds }),
     },
   }
+  /** Per-session projection snapshots the panel context reads. */
+  sessionProjections: Record<string, { values: { modelSelection?: unknown } }> = {}
+  private readonly sessionListeners = new Set<() => void>()
   readonly sessions = {
     list: {
-      getSnapshot: () => ({ byId: this.sessionSummaries }),
+      getSnapshot: () => ({ byId: this.sessionSummaries, projectionsBySession: this.sessionProjections }),
+      subscribe: (listener: () => void) => {
+        this.sessionListeners.add(listener)
+        return () => { this.sessionListeners.delete(listener) }
+      },
     },
+  }
+
+  /** Push one list-notification (the panel context recomputes on it). */
+  notifySessions(): void {
+    for (const listener of this.sessionListeners) listener()
   }
   readonly uiWorkspace = {
     started: [] as Array<[string | undefined]>,

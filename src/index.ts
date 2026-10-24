@@ -16,11 +16,11 @@ import type {} from '@deepseek-ai/dsh-host-webserver'
 import type {} from '@deepseek-ai/dsh-settings'
 import { childProcessExec } from './git.js'
 import {
-  handleCreateBranch, handleCreateWorktree, handleDeleteBranch, handleEnsureDirectory, handleFetch, handleGroupWorktrees, handleInspectWorktree, handlePathExists, handlePurgeDirectory, handleRemoveWorktree, handleRenameBranch, handleStatus, handleSwitch, handleUpdate, handlePush, handleWorktreesAll,
-  type RouteDeps, type RouteOutcome,
+  handleAiCommitMessage, handleChanges, handleCommit, handleCommitFiles, handleCreateBranch, handleCreateWorktree, handleDeleteBranch, handleEnsureDirectory, handleFetch, handleGroupWorktrees, handleInspectWorktree, handleLog, handlePathExists, handlePurgeDirectory, handleRemoveWorktree, handleRenameBranch, handleStage, handleStatus, handleSwitch, handleUpdate, handlePush, handleWorktreesAll,
+  type LlmStreamRuntime, type RouteDeps, type RouteOutcome,
 } from './routes.js'
 import { validateRootDir } from './settings.js'
-import { ROUTE_BRANCH, ROUTE_BRANCH_DELETE, ROUTE_BRANCH_RENAME, ROUTE_ENSURE_DIRECTORY, ROUTE_EXISTS, ROUTE_FETCH, ROUTE_GROUP, ROUTE_INSPECT, ROUTE_PUSH, ROUTE_PURGE, ROUTE_REMOVE, ROUTE_STATUS, ROUTE_SWITCH, ROUTE_UPDATE, ROUTE_WORKTREE, ROUTE_WORKTREES_ALL } from './wire.js'
+import { ROUTE_AI_COMMIT_MESSAGE, ROUTE_BRANCH, ROUTE_BRANCH_DELETE, ROUTE_BRANCH_RENAME, ROUTE_CHANGES, ROUTE_COMMIT, ROUTE_COMMIT_FILES, ROUTE_ENSURE_DIRECTORY, ROUTE_EXISTS, ROUTE_FETCH, ROUTE_GROUP, ROUTE_INSPECT, ROUTE_LOG, ROUTE_PUSH, ROUTE_PURGE, ROUTE_REMOVE, ROUTE_STAGE, ROUTE_STATUS, ROUTE_SWITCH, ROUTE_UPDATE, ROUTE_WORKTREE, ROUTE_WORKTREES_ALL } from './wire.js'
 
 export const name = 'dsh-git-branch'
 
@@ -257,5 +257,25 @@ export function apply(ctx: Context, config: Config = {}): void {
     postRoute(ROUTE_ENSURE_DIRECTORY, 'ensure-directory', handleEnsureDirectory)
     postRoute(ROUTE_WORKTREES_ALL, 'worktrees-all', handleWorktreesAll)
     postRoute(ROUTE_PURGE, 'purge', handlePurgeDirectory)
+    postRoute(ROUTE_CHANGES, 'changes', handleChanges)
+    postRoute(ROUTE_STAGE, 'stage', handleStage)
+    postRoute(ROUTE_COMMIT, 'commit', handleCommit)
+    postRoute(ROUTE_LOG, 'log', handleLog)
+    postRoute(ROUTE_COMMIT_FILES, 'commit-files', handleCommitFiles)
+
+    // The AI commit-message route exists only where the host tree provides
+    // the dsh-llm service: the injection resolves once the service is up and
+    // never fires without it, so an llm-less deployment answers 404 and the
+    // browser half hides its AI affordance.
+    ctx.inject(['llm'], (llmCtx) => {
+      const llm = (llmCtx as unknown as { llm: LlmStreamRuntime }).llm
+      webCtx.effect(() => webCtx.webServer.register({ kind: 'exact', path: ROUTE_AI_COMMIT_MESSAGE, handler: async (req: IncomingMessage, res: ServerResponse) => {
+        try {
+          send(res, await handleAiCommitMessage(deps(), llm, await readJson(req)))
+        } catch (error) {
+          send(res, { status: 400, body: { error: error instanceof Error ? error.message : String(error) } })
+        }
+      } }), 'git-worktree: ai-commit-message route')
+    })
   })
 }

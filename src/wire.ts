@@ -61,6 +61,30 @@ export const ROUTE_WORKTREES_ALL = `${ROUTE_PREFIX}/worktrees-all`
  * the storage root (an orphaned leftover whose .git is already gone). */
 export const ROUTE_PURGE = `${ROUTE_PREFIX}/purge`
 
+/** POST ROUTE_PREFIX/changes — working-tree changes (staged/unstaged rows). */
+export const ROUTE_CHANGES = `${ROUTE_PREFIX}/changes`
+
+/** POST ROUTE_PREFIX/stage — batch stage (git add) or unstage paths. */
+export const ROUTE_STAGE = `${ROUTE_PREFIX}/stage`
+
+/** POST ROUTE_PREFIX/commit — commit the index with a message. */
+export const ROUTE_COMMIT = `${ROUTE_PREFIX}/commit`
+
+/** POST ROUTE_PREFIX/log — paginated commit history of the checkout. */
+export const ROUTE_LOG = `${ROUTE_PREFIX}/log`
+
+/** POST ROUTE_PREFIX/commit-files — the files one commit changed. */
+export const ROUTE_COMMIT_FILES = `${ROUTE_PREFIX}/commit-files`
+
+/** POST ROUTE_PREFIX/ai-commit-message — one-shot LLM commit message from
+ * the staged diff (mounted only where the host provides the llm service). */
+export const ROUTE_AI_COMMIT_MESSAGE = `${ROUTE_PREFIX}/ai-commit-message`
+
+/** Upper bound for one commit message (characters). The host rejects longer
+ * bodies and the client caps its input at the same value, so the two ends
+ * can never disagree. */
+export const COMMIT_MESSAGE_LIMIT = 2000
+
 /** One selectable branch row. */
 export interface BranchEntry {
   /** Display name: a bare local name (`main`) or `<remote>/<name>`. */
@@ -102,6 +126,11 @@ export type RepoStatus =
       /** Local branches plus every remote's remote-only branches (those
        * without a same-named local twin; `<remote>/HEAD` dropped). */
       branches: BranchEntry[]
+      /** The FULL remote view: every remote branch, local twins included
+       * (the git panel's remote tree; `<remote>/HEAD` and bare leftover
+       * refs dropped). Absent from hosts serving an older build of this
+       * route — the client falls back to filtering `branches`. */
+      remoteBranches?: BranchEntry[]
       /** Every worktree of the repository, main first (git order). */
       worktrees: WorktreeEntry[]
       /** Resolved worktree storage root (absolute) — what the settings say today. */
@@ -416,4 +445,154 @@ export interface PurgeDirectoryResult {
   /** Always true on 200 — the directory (contents included) is gone. */
   path: string
   removed: boolean
+}
+
+/** Status letter of one working-tree or commit file change. `U` never comes
+ * from a commit's file list — it marks an UNMERGED working-tree path. */
+export type ChangeStatus = 'A' | 'M' | 'D' | 'R' | 'C' | 'T' | 'U'
+
+/** One working-tree change row of POST changes. */
+export interface WorktreeChange {
+  /** New path, relative to the repository root. */
+  path: string
+  /** Original path for a rename/copy. */
+  oldPath?: string
+  /** Index (staged) status; absent when the index matches HEAD. */
+  staged?: ChangeStatus
+  /** Worktree (unstaged) status; absent when the worktree matches the index. */
+  unstaged?: ChangeStatus
+  /** True for an untracked path (neither staged nor tracked). */
+  untracked?: boolean
+}
+
+/** POST changes request body. */
+export interface ChangesBody {
+  /** Any directory inside the repository (the queried checkout). */
+  repoPath: string
+}
+
+/** POST changes response body. */
+export interface ChangesResult {
+  /** One row per changed path, in git status order; capped server-side. */
+  changes: WorktreeChange[]
+  /** True when the working tree had more rows than the server cap and only
+   * the first ones are listed here. */
+  truncated?: boolean
+}
+
+/** POST stage request body. */
+export interface StageBody {
+  /** Any directory inside the repository (the queried checkout). */
+  repoPath: string
+  /** Relative paths to (un)stage; they must come from POST changes output. */
+  paths: string[]
+  /** True stages (git add); false unstages (git reset / git rm --cached). */
+  stage: boolean
+}
+
+/** POST stage response body. */
+export interface StageResult {
+  /** Always true on 200 — the index now reflects the request. */
+  staged: boolean
+}
+
+/** POST commit request body. */
+export interface CommitBody {
+  /** Any directory inside the repository (the queried checkout). */
+  repoPath: string
+  /** The commit message, verbatim (git -m). */
+  message: string
+}
+
+/** POST commit response body. */
+export interface CommitResult {
+  /** The created commit's full hash. */
+  hash: string
+  /** The commit subject (first line of the message, trimmed). */
+  subject: string
+}
+
+/** One commit row of POST log. */
+export interface CommitEntry {
+  /** Full hash. */
+  hash: string
+  /** Abbreviated hash (%h). */
+  short: string
+  authorName: string
+  authorEmail: string
+  /** Author date, epoch milliseconds. */
+  date: number
+  /** Parent hashes; more than one marks a merge commit. */
+  parents: string[]
+  /** The commit subject (%s). */
+  subject: string
+  /** The commit body (%b); empty when none. */
+  body: string
+  /** Decorations (%D), raw segments: `HEAD -> main`, `tag: v1.0.2`, `origin/main`. */
+  refs: string[]
+}
+
+/** POST log request body. */
+export interface LogBody {
+  /** Any directory inside the repository (the queried checkout). */
+  repoPath: string
+  /** Page size; default 50, capped at 200. */
+  limit?: number
+  /** Offset into the filtered history; default 0. */
+  skip?: number
+  /** Optional starting ref (a branch name, `HEAD`, …); validated server-side. */
+  ref?: string
+}
+
+/** POST log response body. */
+export interface LogResult {
+  commits: CommitEntry[]
+}
+
+/** One file row of POST commit-files. */
+export interface CommitFileEntry {
+  /** New path, relative to the repository root. */
+  path: string
+  /** Original path for a rename/copy. */
+  oldPath?: string
+  status: ChangeStatus
+  /** Added lines; absent for a binary file or when parsing fell short. */
+  insertions?: number
+  /** Deleted lines; same conditions. */
+  deletions?: number
+  /** True when git numstat reported `-` (binary content). */
+  binary?: boolean
+}
+
+/** POST commit-files request body. */
+export interface CommitFilesBody {
+  /** Any directory inside the repository (the queried checkout). */
+  repoPath: string
+  /** The commit hash (validated server-side). */
+  hash: string
+}
+
+/** POST commit-files response body. */
+export interface CommitFilesResult {
+  hash: string
+  files: CommitFileEntry[]
+}
+
+/** POST ai-commit-message request body. */
+export interface AiCommitMessageBody {
+  /** Any directory inside the repository (the queried checkout). */
+  repoPath: string
+  /** The model route to call, as selected by the requesting session. */
+  provider: string
+  model: string
+  /** Adapter-owned reasoning effort for the exact model; absent = default. */
+  effort?: string
+  /** Optional user hint (an existing draft to rewrite, or style directions). */
+  hint?: string
+}
+
+/** POST ai-commit-message response body. */
+export interface AiCommitMessageResult {
+  /** The generated commit message (subject, optionally followed by a body). */
+  message: string
 }

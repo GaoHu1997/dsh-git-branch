@@ -60,6 +60,10 @@ export interface RepoFacts {
   /** Branch checked out by the queried directory. */
   currentBranch: string
   branches: BranchEntry[]
+  /** EVERY remote branch (twins included, `<remote>/HEAD` and bare leftover
+   * refs dropped) — the git panel's remote tree lists the full remote view,
+   * while {@link RepoFacts.branches} keeps the picker's remote-only dedupe. */
+  remoteBranches: BranchEntry[]
   worktrees: WorktreeEntry[]
 }
 
@@ -202,7 +206,7 @@ export async function probeRepo(exec: Exec, path: string, dirExists: DirExists =
     toplevel,
     main: isMainWorktree(toplevel, gitDir),
     currentBranch: await currentBranch(exec, path),
-    branches: await listBranches(exec, repoRoot),
+    ...await listBranches(exec, repoRoot),
     // A stale registration (directory removed behind git's back) must not
     // reach the UI as a real worktree — it would disable branch rows for a
     // folder that no longer exists.
@@ -219,8 +223,11 @@ async function currentBranch(exec: Exec, cwd: string): Promise<string> {
 
 /**
  * Local branches (each carrying its ahead/behind vs the upstream when one
- * exists) plus remote-only branches across EVERY remote (`<remote>/HEAD`
- * dropped).
+ * exists) plus remote branches across EVERY remote (`<remote>/HEAD` and bare
+ * leftover refs dropped), in two shapes: `branches` keeps the picker's
+ * remote-only dedupe (a remote branch with a local twin stays out — the twin
+ * is the actionable row), `remoteBranches` is the FULL remote view (twins
+ * included) the git panel's remote tree lists.
  *
  * The upstream track comes from `%(upstream:track)`, which renders
  * `[ahead N, behind M]` (or a bare `[gone]`) directly after the refname —
@@ -228,7 +235,7 @@ async function currentBranch(exec: Exec, cwd: string): Promise<string> {
  * without a separator. `[gone]` (upstream deleted server-side) carries no
  * counts and is dropped here; the UI renders no marker for it.
  */
-async function listBranches(exec: Exec, repoRoot: string): Promise<BranchEntry[]> {
+async function listBranches(exec: Exec, repoRoot: string): Promise<{ branches: BranchEntry[]; remoteBranches: BranchEntry[] }> {
   const localOut = await git(exec, repoRoot, ['for-each-ref', 'refs/heads', '--format=%(refname:short)%(upstream:track)'])
   const entries: BranchEntry[] = []
   for (const line of localOut.split('\n')) {
@@ -246,6 +253,7 @@ async function listBranches(exec: Exec, repoRoot: string): Promise<BranchEntry[]
     entries.push(entry)
   }
   const remoteOut = await gitMaybe(exec, repoRoot, ['for-each-ref', 'refs/remotes', '--format=%(refname:short)'])
+  const remoteBranches: BranchEntry[] = []
   if (remoteOut !== undefined) {
     // Local names as a Set: the twin lookup runs once per remote row, and a
     // linear scan over the assembled list would make the loop quadratic —
@@ -257,15 +265,18 @@ async function listBranches(exec: Exec, repoRoot: string): Promise<BranchEntry[]
       const localName = localBranchName(name)
       // A bare ref directly under refs/remotes (shortname without `/`, like
       // a leftover `refs/remotes/origin`) is not a remote branch — git
-      // branch -r hides it, the menu must not offer it either.
-      if (localName === name) continue
-      // A remote branch with a local twin stays hidden: the twin is the
-      // actionable row, showing both would duplicate it in the menu.
-      if (localName === 'HEAD' || localNames.has(localName)) continue
+      // branch -r hides it, the menu must not offer it either. `<remote>/HEAD`
+      // is a symbolic pointer, not a branch, and drops from both lists.
+      if (localName === name || localName === 'HEAD') continue
+      remoteBranches.push({ name, kind: 'remote' })
+      // A remote branch with a local twin stays out of the picker group:
+      // the twin is the actionable row, showing both would duplicate it in
+      // the menu. The full list above keeps it for the panel's tree.
+      if (localNames.has(localName)) continue
       entries.push({ name, kind: 'remote' })
     }
   }
-  return entries
+  return { branches: entries, remoteBranches }
 }
 
 /** Parse `git worktree list --porcelain` into entries, main first. */
@@ -789,5 +800,336 @@ export async function appendWorktreeExclude(seams: ExcludeSeams, repoRoot: strin
     return undefined
   } catch (error) {
     return error instanceof Error ? error.message : String(error)
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Git panel (working tree, staging, commit, history, AI message).
+ * Every panel command runs at the QUERIED checkout's own toplevel, so a
+ * linked-worktree session reads and mutates its own worktree only.
+ * ------------------------------------------------------------------ */
+
+/** Working-tree facts of POST /changes. */
+export interface WorkingChanges {
+  /** One row per changed path, in `git status --porcelain` order. */
+  changes: Array<{
+    path: string
+    oldPath?: string
+    staged?: 'A' | 'M' | 'D' | 'R' | 'C' | 'T'
+    unstaged?: 'A' | 'M' | 'D' | 'T' | 'U'
+    untracked?: boolean
+  }>
+}
+
+/** The XY pairs git reports as UNMERGED: until the path is re-staged, the
+ * index holds conflict stages and neither column is a plain status. Such a
+ * row surfaces as `unstaged: 'U'` (staging it resolves the conflict). */
+const UNMERGED_XY = new Set(['DD', 'AU', 'UD', 'UA', 'DU', 'AA', 'UU'])
+
+/**
+ * Parse one `git status --porcelain=v1 -z` byte stream into change rows.
+ * NUL-separated so spaces and CJK in paths survive; a rename/copy entry is
+ * followed by its ORIGINAL path as the next NUL field. XY columns: staged
+ * (X) and unstaged (Y); `??` marks untracked; the unmerged pairs collapse
+ * to a conflict row (`unstaged: 'U'`).
+ */
+export function parseStatusPorcelainZ(out: string): WorkingChanges['changes'] {
+  const fields = out.split('\0')
+  const changes: WorkingChanges['changes'] = []
+  for (let i = 0; i < fields.length; i += 1) {
+    const entry = fields[i]
+    if (entry === undefined || entry === '') continue
+    const xy = entry.slice(0, 2)
+    // XY columns, then exactly one space separator, then the path.
+    const path = entry.slice(3)
+    if (path === '') continue
+    if (xy === '??') {
+      changes.push({ path, untracked: true })
+      continue
+    }
+    if (UNMERGED_XY.has(xy)) {
+      changes.push({ path, unstaged: 'U' })
+      continue
+    }
+    const row: WorkingChanges['changes'][number] = { path }
+    const x = xy[0] ?? ' '
+    const y = xy[1] ?? ' '
+    if (x !== ' ' && x !== '?') {
+      row.staged = x as NonNullable<WorkingChanges['changes'][number]['staged']>
+    }
+    if (y !== ' ' && y !== '?') {
+      row.unstaged = y as NonNullable<WorkingChanges['changes'][number]['unstaged']>
+    }
+    if (x === 'R' || x === 'C' || y === 'R' || y === 'C') {
+      // Rename/copy: the ORIGINAL path rides the next NUL field (new path first).
+      const oldPath = fields[i + 1]
+      i += 1
+      if (oldPath !== undefined && oldPath !== '') row.oldPath = oldPath
+    }
+    if (row.staged !== undefined || row.unstaged !== undefined || row.untracked === true) changes.push(row)
+  }
+  return changes
+}
+
+/**
+ * Working-tree changes of the queried checkout: `git status --porcelain=v1 -z`
+ * with `core.quotepath=false` so CJK paths arrive unescaped.
+ * @param exec - executor seam.
+ * @param cwd - the checkout directory (worktree toplevel).
+ */
+export async function workingChanges(exec: Exec, cwd: string): Promise<WorkingChanges> {
+  const out = await git(exec, cwd, ['-c', 'core.quotepath=false', 'status', '--porcelain=v1', '-z'])
+  return { changes: parseStatusPorcelainZ(out) }
+}
+
+/** Guard for one (un)stage path: relative, no `..` escape, no drive root. */
+export function isStageablePath(value: string): boolean {
+  if (value === '' || value.length > 1024) return false
+  if (isAbsolute(value) || /^[a-zA-Z]:/.test(value)) return false
+  // An untracked DIRECTORY arrives collapsed as `dir/` — one trailing slash
+  // is git's own shape and `git add` accepts it; only the trailing-slash
+  // form is trimmed, an interior empty segment still refuses.
+  const trimmed = value.endsWith('/') && value.length > 1 ? value.slice(0, -1) : value
+  return trimmed.split('/').every(segment => segment !== '..' && segment !== '')
+}
+
+/**
+ * Stage or unstage paths of the queried checkout. Staging is `git add`;
+ * unstaging is `git reset -q HEAD --` which also answers the two tolerant
+ * cases (an untracked path not in the index, an unborn HEAD) with a silent
+ * success — both were smoke-verified.
+ * @param exec - executor seam.
+ * @param cwd - the checkout directory.
+ * @param paths - relative paths (validated upstream via {@link isStageablePath}).
+ * @param stage - true to stage, false to unstage.
+ */
+export async function stagePaths(exec: Exec, cwd: string, paths: readonly string[], stage: boolean): Promise<void> {
+  if (paths.length === 0) return
+  if (stage) {
+    await git(exec, cwd, ['add', '--', ...paths])
+    return
+  }
+  await git(exec, cwd, ['reset', '-q', 'HEAD', '--', ...paths])
+}
+
+/** Outcome of {@link commitIndex}. */
+export interface CommitOutcome {
+  hash: string
+  subject: string
+}
+
+/**
+ * Commit the index of the queried checkout (`git commit -m`). Hooks run as
+ * usual; an empty index is git's own refusal and surfaces as a GitError.
+ * @param exec - executor seam.
+ * @param cwd - the checkout directory.
+ * @param message - non-empty commit message (validated upstream).
+ */
+export async function commitIndex(exec: Exec, cwd: string, message: string): Promise<CommitOutcome> {
+  await git(exec, cwd, ['commit', '-m', message])
+  const hash = (await git(exec, cwd, ['rev-parse', 'HEAD'])).trim()
+  const subject = message.split('\n')[0]?.trim() ?? ''
+  return { hash, subject }
+}
+
+/** The pretty format one log record is parsed from: %x1f field split, %x1e record split. */
+const LOG_FORMAT = '%H%x1f%h%x1f%an%x1f%ae%x1f%ad%x1f%P%x1f%s%x1f%b%x1f%D%x1e'
+
+/** Parse `git log` output produced with {@link LOG_FORMAT}. */
+export function parseLogOutput(out: string): CommitEntryRaw[] {
+  const commits: CommitEntryRaw[] = []
+  for (const record of out.split('\x1e')) {
+    const text = record.startsWith('\n') ? record.slice(1) : record
+    if (text.trim() === '') continue
+    const f = text.split('\x1f')
+    if (f.length < 9) continue
+    const hash = f[0] ?? ''
+    const short = f[1] ?? ''
+    const dateRaw = f[4] ?? ''
+    const parentsRaw = f[5] ?? ''
+    const refsRaw = f[8] ?? ''
+    if (hash === '' || short === '') continue
+    const date = Date.parse(dateRaw)
+    commits.push({
+      hash,
+      short,
+      authorName: f[2] ?? '',
+      authorEmail: f[3] ?? '',
+      date: Number.isFinite(date) ? date : 0,
+      parents: parentsRaw === '' ? [] : parentsRaw.split(' '),
+      subject: f[6] ?? '',
+      body: f[7] ?? '',
+      refs: refsRaw === '' ? [] : refsRaw.split(', ').map(ref => ref.trim()).filter(ref => ref !== ''),
+    })
+  }
+  return commits
+}
+
+/** One parsed log row, before any client shaping. */
+export interface CommitEntryRaw {
+  hash: string
+  short: string
+  authorName: string
+  authorEmail: string
+  date: number
+  parents: string[]
+  subject: string
+  body: string
+  refs: string[]
+}
+
+/**
+ * Paginated history of the queried checkout. `ref` is verified with
+ * `rev-parse --verify` first, so an arbitrary string can never reach the log
+ * arguments as anything but a resolvable rev. An unborn checkout (no commits
+ * yet) answers an empty page instead of an error.
+ * @param exec - executor seam.
+ * @param cwd - the checkout directory.
+ * @param limit - page size (1..200, validated upstream).
+ * @param skip - offset (>= 0, validated upstream).
+ * @param ref - optional starting rev; absent = the checkout's HEAD.
+ */
+export async function logHistory(exec: Exec, cwd: string, limit: number, skip: number, ref?: string): Promise<CommitEntryRaw[]> {
+  let start: string | undefined
+  if (ref !== undefined && ref !== '' && ref !== 'HEAD') {
+    const verified = await gitMaybe(exec, cwd, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`])
+    if (verified === undefined || verified.trim() === '') {
+      throw new GitError(['log'], 1, `unknown revision "${ref}"`)
+    }
+    start = verified.trim()
+  }
+  try {
+    const out = await git(exec, cwd, [
+      'log', `--max-count=${String(limit)}`, `--skip=${String(skip)}`,
+      '--date=iso-strict', `--pretty=format:${LOG_FORMAT}`,
+      ...(start === undefined ? [] : [start]),
+    ])
+    return parseLogOutput(out)
+  } catch (error) {
+    // An unborn checkout refuses `git log` with exit 128; the stderr TEXT is
+    // locale-dependent, so confirm by asking HEAD directly instead of
+    // matching the message. An existing HEAD means a real failure — rethrow.
+    if (error instanceof GitError && error.code === 128
+      && await gitMaybe(exec, cwd, ['rev-parse', '--verify', '--quiet', 'HEAD']) === undefined) return []
+    throw error
+  }
+}
+
+/** One file row of {@link commitFiles}. */
+export interface CommitFileRow {
+  path: string
+  oldPath?: string
+  status: 'A' | 'M' | 'D' | 'R' | 'C' | 'T'
+  insertions?: number
+  deletions?: number
+  binary?: boolean
+}
+
+/**
+ * Parse one `git diff --name-status -M` output block (tabs between fields).
+ * R/C rows carry `score\told\tnew`; plain rows `status\tpath`.
+ */
+export function parseNameStatus(out: string): Array<{ path: string; oldPath?: string; status: CommitFileRow['status'] }> {
+  const rows: Array<{ path: string; oldPath?: string; status: CommitFileRow['status'] }> = []
+  for (const line of out.split('\n')) {
+    if (line.trim() === '') continue
+    const parts = line.split('\t')
+    const head = parts[0] ?? ''
+    const letter = head[0] ?? ''
+    if (letter === 'R' || letter === 'C') {
+      const oldPath = parts[1] ?? ''
+      const path = parts[2] ?? ''
+      if (path === '') continue
+      rows.push(oldPath === '' ? { path, status: letter } : { path, oldPath, status: letter })
+      continue
+    }
+    const path = parts[1] ?? ''
+    if (path === '') continue
+    if (letter === 'A' || letter === 'M' || letter === 'D' || letter === 'T') {
+      rows.push({ path, status: letter })
+    }
+  }
+  return rows
+}
+
+/**
+ * Parse one `git diff --numstat -M` output block: `ins\tdel\tpath`, `-` for a
+ * binary file's counts. Only the COUNTS are consumed — paths (whose rename
+ * form `old => new` / `prefix{old => new}suffix` is ambiguous) come from the
+ * aligned name-status block instead.
+ */
+export function parseNumstatCounts(out: string): Array<{ insertions: number | undefined; deletions: number | undefined }> {
+  return out.split('\n').filter(line => line.trim() !== '').map(line => {
+    const parts = line.split('\t')
+    const ins = parts[0] ?? '-'
+    const del = parts[1] ?? '-'
+    const insertions = ins === '-' || !/^\d+$/.test(ins) ? undefined : Number(ins)
+    const deletions = del === '-' || !/^\d+$/.test(del) ? undefined : Number(del)
+    return { insertions, deletions }
+  })
+}
+
+/**
+ * The files one commit changed, of the queried checkout. The hash is
+ * verified with `rev-parse --verify` first; status comes from
+ * `--name-status -M`, the +/- line counts from the index-aligned
+ * `--numstat -M` block.
+ * @param exec - executor seam.
+ * @param cwd - the checkout directory.
+ * @param hash - the commit hash (validated upstream, verified here).
+ */
+export async function commitFiles(exec: Exec, cwd: string, hash: string): Promise<CommitFileRow[]> {
+  const verified = await gitMaybe(exec, cwd, ['rev-parse', '--verify', '--quiet', `${hash}^{commit}`])
+  if (verified === undefined || verified.trim() === '') {
+    throw new GitError(['show'], 1, `unknown revision "${hash}"`)
+  }
+  const resolved = verified.trim()
+  const [statusOut, numstatOut] = await Promise.all([
+    git(exec, cwd, ['-c', 'core.quotepath=false', 'show', '--name-status', '-M', '--format=', resolved]),
+    git(exec, cwd, ['-c', 'core.quotepath=false', 'show', '--numstat', '-M', '--format=', resolved]),
+  ])
+  const rows = parseNameStatus(statusOut)
+  const counts = parseNumstatCounts(numstatOut)
+  return rows.map((row, index) => {
+    const count = counts[index]
+    const binary = count !== undefined && (count.insertions === undefined || count.deletions === undefined)
+    return {
+      ...row,
+      ...(count !== undefined && !binary && count.insertions !== undefined ? { insertions: count.insertions } : {}),
+      ...(count !== undefined && !binary && count.deletions !== undefined ? { deletions: count.deletions } : {}),
+      ...(binary ? { binary: true } : {}),
+    }
+  })
+}
+
+/** Cap for the diff text handed to the AI route (characters). */
+export const AI_DIFF_CAP = 12_000
+
+/**
+ * The diff text the AI commit-message route sees: the staged diff when the
+ * index is non-empty, otherwise the unstaged diff plus untracked paths —
+ * an AI message for nothing staged should describe what WOULD be committed.
+ * Truncated to {@link AI_DIFF_CAP} characters; also collects the last
+ * subjects so the model can follow the repository's own style.
+ * @param exec - executor seam.
+ * @param cwd - the checkout directory.
+ */
+export async function collectAiDiff(exec: Exec, cwd: string): Promise<{ diff: string; recentSubjects: string[]; staged: boolean }> {
+  const stagedDiff = await gitMaybe(exec, cwd, ['-c', 'core.quotepath=false', 'diff', '--cached'])
+  let staged = true
+  let diff = stagedDiff ?? ''
+  if (diff.trim() === '') {
+    staged = false
+    const unstaged = await gitMaybe(exec, cwd, ['-c', 'core.quotepath=false', 'diff'])
+    const untracked = await workingChanges(exec, cwd)
+    const names = untracked.changes.filter(row => row.untracked).map(row => row.path)
+    diff = `${unstaged ?? ''}${names.length > 0 ? `\n${names.map(name => `Untracked file: ${name}`).join('\n')}` : ''}`
+  }
+  if (diff.length > AI_DIFF_CAP) diff = `${diff.slice(0, AI_DIFF_CAP)}\n…(diff truncated)`
+  const recent = await gitMaybe(exec, cwd, ['log', '--max-count=10', '--pretty=format:%s'])
+  return {
+    diff,
+    recentSubjects: (recent ?? '').split('\n').map(line => line.trim()).filter(line => line !== ''),
+    staged,
   }
 }

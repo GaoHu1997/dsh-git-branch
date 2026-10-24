@@ -75,6 +75,13 @@ describe('probeRepo', () => {
       { name: 'origin/dev', kind: 'remote' },
       { name: 'upstream/dev', kind: 'remote' },
     ])
+    // The FULL remote view keeps the local twin (origin/main): the git
+    // panel's remote tree lists every remote branch.
+    expect(facts?.remoteBranches).toEqual([
+      { name: 'origin/main', kind: 'remote' },
+      { name: 'origin/dev', kind: 'remote' },
+      { name: 'upstream/dev', kind: 'remote' },
+    ])
     expect(facts?.worktrees).toEqual([
       { path: p('/repo'), branch: 'main', main: true },
       { path: p('/root/repo/feat-x'), branch: 'feat-x', main: false },
@@ -142,6 +149,7 @@ describe('probeRepo', () => {
       { name: 'dev', kind: 'local' },
       { name: 'sync', kind: 'local' },
     ])
+    expect(facts?.remoteBranches).toEqual([])
   })
 
   it('skips the bare leftover ref under refs/remotes (no slash below it)', async () => {
@@ -159,6 +167,10 @@ describe('probeRepo', () => {
     const facts = await probeRepo(exec, '/repo', () => true)
     expect(facts?.branches).toEqual([
       { name: 'main', kind: 'local' },
+      { name: 'origin/dev', kind: 'remote' },
+    ])
+    expect(facts?.remoteBranches).toEqual([
+      { name: 'origin/main', kind: 'remote' },
       { name: 'origin/dev', kind: 'remote' },
     ])
   })

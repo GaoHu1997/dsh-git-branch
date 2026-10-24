@@ -6,11 +6,12 @@
 import { basename, dirname, join, resolve } from 'node:path'
 import { mkdir, readdir, rm, stat } from 'node:fs/promises'
 import { runPostCreateCopy, type CopyFilesSeams } from './copy-files.js'
-import { appendWorktreeExclude, fsExcludeSeams, GitError, addWorktree, addWorktreeCutout, createBranch, cutoutBranchName, deleteBranch, fetchAll, fsDirExists, inspectWorktree, isAbsoluteDir, probeRepo, probeWorkspaceGit, removeWorktree, renameBranch, resolveBranch, pushBranch, switchBranch, updateBranch, type DirExists, type ExcludeSeams, type Exec } from './git.js'
+import { appendWorktreeExclude, fsExcludeSeams, GitError, addWorktree, addWorktreeCutout, collectAiDiff, commitFiles, commitIndex, createBranch, cutoutBranchName, deleteBranch, fetchAll, fsDirExists, inspectWorktree, isAbsoluteDir, isStageablePath, logHistory, probeRepo, probeWorkspaceGit, removeWorktree, renameBranch, resolveBranch, pushBranch, stagePaths, switchBranch, updateBranch, workingChanges, type DirExists, type ExcludeSeams, type Exec } from './git.js'
 import { isAbsoluteConfigPath, sanitizeBranchDir } from './normalize.js'
 import { resolveRootDir } from './settings.js'
+import { COMMIT_MESSAGE_LIMIT } from './wire.js'
 import type {
-  CreateBranchBody, CreateBranchResult, CreateWorktreeBody, CreateWorktreeResult, DeleteBranchBody, DeleteBranchResult, EnsureDirectoryBody, EnsureDirectoryResult, FetchBody, FetchResult, GroupWorkspacesResult, InspectWorktreeBody, InspectWorktreeResult, PathExistsResult, PurgeDirectoryBody, PurgeDirectoryResult, RemoveWorktreeBody, RemoveWorktreeResult, RenameBranchBody, RenameBranchResult, RepoStatus, RouteError, SwitchBody, SwitchResult, UpdateBody, UpdateResult, PushBody, PushResult, WorktreesAllResult,
+  AiCommitMessageBody, AiCommitMessageResult, ChangesBody, ChangesResult, CommitBody, CommitFilesBody, CommitFilesResult, CommitResult, CreateBranchBody, CreateBranchResult, CreateWorktreeBody, CreateWorktreeResult, DeleteBranchBody, DeleteBranchResult, EnsureDirectoryBody, EnsureDirectoryResult, FetchBody, FetchResult, GroupWorkspacesResult, InspectWorktreeBody, InspectWorktreeResult, LogBody, LogResult, PathExistsResult, PurgeDirectoryBody, PurgeDirectoryResult, RemoveWorktreeBody, RemoveWorktreeResult, RenameBranchBody, RenameBranchResult, RepoStatus, RouteError, StageBody, StageResult, SwitchBody, SwitchResult, UpdateBody, UpdateResult, PushBody, PushResult, WorktreesAllResult,
 } from './wire.js'
 
 /** Everything the handlers need from the host half. */
@@ -74,7 +75,7 @@ export async function fsMkdirRecursive(path: string): Promise<void> {
 /** One route outcome: HTTP status plus the JSON body. */
 export interface RouteOutcome {
   status: number
-  body: RepoStatus | CreateWorktreeResult | SwitchResult | CreateBranchResult | FetchResult | UpdateResult | GroupWorkspacesResult | InspectWorktreeResult | RemoveWorktreeResult | PathExistsResult | EnsureDirectoryResult | WorktreesAllResult | PurgeDirectoryResult | RouteError
+  body: RepoStatus | CreateWorktreeResult | SwitchResult | CreateBranchResult | FetchResult | UpdateResult | GroupWorkspacesResult | InspectWorktreeResult | RemoveWorktreeResult | PathExistsResult | EnsureDirectoryResult | WorktreesAllResult | PurgeDirectoryResult | ChangesResult | StageResult | CommitResult | LogResult | CommitFilesResult | AiCommitMessageResult | RouteError
 }
 
 /** Uniform failure envelope. */
@@ -357,6 +358,7 @@ export async function handleStatus(deps: RouteDeps, path: string | undefined): P
       main: facts.main,
       currentBranch: facts.currentBranch,
       branches: facts.branches,
+      remoteBranches: facts.remoteBranches,
       worktrees: facts.worktrees,
       rootDir,
     },
@@ -369,11 +371,12 @@ function readBody<T>(
   keys: readonly (keyof T & string)[],
   booleanKeys: readonly (keyof T & string)[] = [],
   optionalKeys: readonly (keyof T & string)[] = [],
+  numberKeys: readonly (keyof T & string)[] = [],
 ): T | RouteOutcome {
   if (typeof body !== 'object' || body === null || Array.isArray(body)) return fail(400, 'request body must be a JSON object')
   const record = body as Record<string, unknown>
   for (const key of Object.keys(record)) {
-    if (!keys.includes(key as keyof T & string) && !booleanKeys.includes(key as keyof T & string) && !optionalKeys.includes(key as keyof T & string)) {
+    if (!keys.includes(key as keyof T & string) && !booleanKeys.includes(key as keyof T & string) && !optionalKeys.includes(key as keyof T & string) && !numberKeys.includes(key as keyof T & string)) {
       return fail(400, `unknown body key "${key}"`)
     }
   }
@@ -390,6 +393,12 @@ function readBody<T>(
     // Optional string: absent stays absent (`name?: string`), present must type-check.
     if (record[key] !== undefined && typeof record[key] !== 'string') {
       return fail(400, `body key "${key}" must be a string`)
+    }
+  }
+  for (const key of numberKeys) {
+    // Optional number: absent stays absent (`limit?: number`), present must type-check.
+    if (record[key] !== undefined && typeof record[key] !== 'number') {
+      return fail(400, `body key "${key}" must be a number`)
     }
   }
   return record as T
@@ -841,5 +850,240 @@ export async function handleEnsureDirectory(deps: RouteDeps, body: unknown): Pro
     return { status: 200, body: { created: true } }
   } catch (error) {
     return fail(500, error instanceof Error ? error.message : String(error))
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Git panel routes: working tree, staging, commit, history, AI message.
+ * All of them act on the QUERIED checkout (repoPath = any directory inside
+ * it), so a linked-worktree session reads and mutates its own worktree.
+ * ------------------------------------------------------------------ */
+
+/** Upper bound on paths one /stage request accepts. */
+const STAGE_PATHS_LIMIT = 500
+
+/** Upper bound on the rows one /changes answer lists; a busier working tree
+ * is flagged `truncated` instead of flooding the panel. */
+export const CHANGES_ROWS_LIMIT = 500
+
+/** Common validation: `{ repoPath }`-shaped bodies and their checkout directory. */
+function readRepoPath(parsed: { repoPath: string } | RouteOutcome): string | RouteOutcome {
+  if (isOutcome(parsed)) return parsed
+  if (!isAbsoluteDir(parsed.repoPath)) return fail(400, '"repoPath" must be an absolute directory')
+  return parsed.repoPath
+}
+
+/** Map a git failure on the queried checkout to the uniform 400 envelope. */
+function checkoutFailure(error: unknown): RouteOutcome {
+  const message = error instanceof Error ? error.message : String(error)
+  return fail(400, message)
+}
+
+/**
+ * POST /changes — the queried checkout's working-tree rows (staged,
+ * unstaged, untracked), straight from `git status --porcelain=v1 -z`,
+ * capped at {@link CHANGES_ROWS_LIMIT} rows (`truncated` flags the cut).
+ * @param deps - host dependencies.
+ * @param body - parsed request body: `{ repoPath }`.
+ */
+export async function handleChanges(deps: RouteDeps, body: unknown): Promise<RouteOutcome> {
+  const parsed = readBody<ChangesBody>(body, ['repoPath'])
+  if (isOutcome(parsed)) return parsed
+  const repoPath = readRepoPath(parsed)
+  if (typeof repoPath !== 'string') return repoPath
+  try {
+    const { changes } = await workingChanges(deps.exec, repoPath)
+    if (changes.length > CHANGES_ROWS_LIMIT) {
+      return { status: 200, body: { changes: changes.slice(0, CHANGES_ROWS_LIMIT), truncated: true } }
+    }
+    return { status: 200, body: { changes } }
+  } catch (error) {
+    return checkoutFailure(error)
+  }
+}
+
+/**
+ * POST /stage — stage (`git add`) or unstage (`git reset -q HEAD --`) the
+ * given relative paths of the queried checkout. Paths must be relative,
+ * `..`-free, and bounded ({@link STAGE_PATHS_LIMIT}); they are passed to git
+ * as execFile arguments, never through a shell.
+ * @param deps - host dependencies.
+ * @param body - parsed request body: `{ repoPath, paths, stage }`.
+ */
+export async function handleStage(deps: RouteDeps, body: unknown): Promise<RouteOutcome> {
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) return fail(400, 'request body must be a JSON object')
+  const record = body as Record<string, unknown>
+  for (const key of Object.keys(record)) {
+    if (key !== 'repoPath' && key !== 'paths' && key !== 'stage') return fail(400, `unknown body key "${key}"`)
+  }
+  const repoPathRaw = record.repoPath
+  if (typeof repoPathRaw !== 'string' || !isAbsoluteDir(repoPathRaw)) return fail(400, '"repoPath" must be an absolute directory')
+  if (record.stage !== true && record.stage !== false) return fail(400, 'body key "stage" must be a boolean')
+  const paths = record.paths
+  if (!Array.isArray(paths) || !paths.every(item => typeof item === 'string')) {
+    return fail(400, 'body key "paths" must be an array of relative paths')
+  }
+  if (paths.length === 0) return fail(400, 'body key "paths" must not be empty')
+  if (paths.length > STAGE_PATHS_LIMIT) return fail(400, `body key "paths" accepts at most ${String(STAGE_PATHS_LIMIT)} paths`)
+  const bad = paths.find(path => !isStageablePath(path))
+  if (bad !== undefined) return fail(400, `"${bad}" is not a stageable relative path`)
+  try {
+    await stagePaths(deps.exec, repoPathRaw, paths, record.stage)
+    return { status: 200, body: { staged: true } }
+  } catch (error) {
+    return checkoutFailure(error)
+  }
+}
+
+/** Upper bound for one commit message (characters): the shared wire constant,
+ * so the client's input cap and this rejection can never drift apart. */
+
+/**
+ * POST /commit — commit the queried checkout's index (`git commit -m`).
+ * Hooks run as usual; an empty index is git's own refusal, surfaced verbatim.
+ * @param deps - host dependencies.
+ * @param body - parsed request body: `{ repoPath, message }`.
+ */
+export async function handleCommit(deps: RouteDeps, body: unknown): Promise<RouteOutcome> {
+  const parsed = readBody<CommitBody>(body, ['repoPath', 'message'])
+  if (isOutcome(parsed)) return parsed
+  const repoPath = readRepoPath(parsed)
+  if (typeof repoPath !== 'string') return repoPath
+  const message = parsed.message
+  if (message.trim() === '') return fail(400, '"message" must not be blank')
+  if (message.length > COMMIT_MESSAGE_LIMIT) return fail(400, `"message" accepts at most ${String(COMMIT_MESSAGE_LIMIT)} characters`)
+  try {
+    const result = await commitIndex(deps.exec, repoPath, message)
+    return { status: 200, body: result }
+  } catch (error) {
+    return checkoutFailure(error)
+  }
+}
+
+/** Default and maximum page size of POST /log. */
+export const LOG_LIMIT_DEFAULT = 50
+export const LOG_LIMIT_MAX = 200
+
+/**
+ * POST /log — one page of the queried checkout's history. The optional `ref`
+ * is verified server-side (`rev-parse --verify`), an unborn checkout answers
+ * an empty page, and everything else surfaces git's own stderr.
+ * @param deps - host dependencies.
+ * @param body - parsed request body: `{ repoPath, limit?, skip?, ref? }`.
+ */
+export async function handleLog(deps: RouteDeps, body: unknown): Promise<RouteOutcome> {
+  const parsed = readBody<LogBody>(body, ['repoPath'], [], ['ref'], ['limit', 'skip'])
+  if (isOutcome(parsed)) return parsed
+  const repoPath = readRepoPath(parsed)
+  if (typeof repoPath !== 'string') return repoPath
+  const limit = parsed.limit ?? LOG_LIMIT_DEFAULT
+  const skip = parsed.skip ?? 0
+  if (!Number.isInteger(limit) || limit < 1 || limit > LOG_LIMIT_MAX) {
+    return fail(400, `"limit" must be an integer between 1 and ${String(LOG_LIMIT_MAX)}`)
+  }
+  if (!Number.isInteger(skip) || skip < 0) return fail(400, '"skip" must be an integer >= 0')
+  const ref = parsed.ref
+  if (ref !== undefined && (ref.trim() === '' || ref.length > 300 || ref.startsWith('-'))) {
+    return fail(400, '"ref" must be a non-empty revision name')
+  }
+  try {
+    const commits = await logHistory(deps.exec, repoPath, limit, skip, ref)
+    return { status: 200, body: { commits } }
+  } catch (error) {
+    return checkoutFailure(error)
+  }
+}
+
+/**
+ * POST /commit-files — the files one commit of the queried checkout changed.
+ * The hash is verified server-side; unknown revisions answer 400.
+ * @param deps - host dependencies.
+ * @param body - parsed request body: `{ repoPath, hash }`.
+ */
+export async function handleCommitFiles(deps: RouteDeps, body: unknown): Promise<RouteOutcome> {
+  const parsed = readBody<CommitFilesBody>(body, ['repoPath', 'hash'])
+  if (isOutcome(parsed)) return parsed
+  const repoPath = readRepoPath(parsed)
+  if (typeof repoPath !== 'string') return repoPath
+  const hash = parsed.hash
+  if (!/^[0-9a-fA-F]{4,64}$/.test(hash)) return fail(400, '"hash" must be a git object id')
+  try {
+    const files = await commitFiles(deps.exec, repoPath, hash)
+    return { status: 200, body: { hash, files } }
+  } catch (error) {
+    return checkoutFailure(error)
+  }
+}
+
+/** Narrow face of the host llm runtime the AI route needs. The service is
+ * registered by the dsh-llm host plugin; the panel mounts this route only
+ * where that injection resolves. Message content is the model-facing BLOCK
+ * list (a plain string is rejected), and visible text arrives only as
+ * `text-delta` chunks (reasoning deltas carry text too and must not fold). */
+export interface LlmStreamRuntime {
+  stream(options: {
+    provider: string
+    model: string
+    reasoningEffort?: string
+    messages: ReadonlyArray<{ role: 'user'; content: ReadonlyArray<{ type: 'text'; text: string }> }>
+    system?: string
+    temperature?: number
+    maxTokens?: number
+  }): AsyncIterable<{ type: string; text?: string }>
+}
+
+/** Bound for the AI-generated message (characters). */
+const AI_MESSAGE_LIMIT = 2000
+
+/**
+ * POST /ai-commit-message — generate a commit message from the checkout's
+ * diff with ONE one-shot llm call. The model route (provider/model/effort)
+ * arrives from the requesting session's own selection, so the generation uses
+ * the model the user is already talking to; the diff is truncated and the
+ * reply folded to plain text.
+ * @param deps - host dependencies.
+ * @param llm - the resolved llm runtime (the route is mounted only with one).
+ * @param body - parsed request body: `{ repoPath, provider, model, effort?, hint? }`.
+ */
+export async function handleAiCommitMessage(deps: RouteDeps, llm: LlmStreamRuntime, body: unknown): Promise<RouteOutcome> {
+  const parsed = readBody<AiCommitMessageBody>(body, ['repoPath', 'provider', 'model'], [], ['effort', 'hint'])
+  if (isOutcome(parsed)) return parsed
+  const repoPath = readRepoPath(parsed)
+  if (typeof repoPath !== 'string') return repoPath
+  if (parsed.provider.trim() === '' || parsed.model.trim() === '') {
+    return fail(400, '"provider" and "model" must be non-empty')
+  }
+  if (parsed.hint !== undefined && parsed.hint.length > 2000) return fail(400, '"hint" accepts at most 2000 characters')
+  try {
+    const { diff, recentSubjects, staged } = await collectAiDiff(deps.exec, repoPath)
+    if (diff.trim() === '') return fail(400, 'no changes to describe (the working tree and index are clean)')
+    const style = recentSubjects.length > 0
+      ? `Recent commit subjects of this repository (follow their language and style):\n${recentSubjects.map(subject => `- ${subject}`).join('\n')}`
+      : ''
+    const userText = [
+      `Generate a git commit message for the ${staged ? 'staged' : 'working-tree'} changes below.`,
+      style,
+      parsed.hint === undefined ? undefined : `User hint (rewrite or style request): ${parsed.hint}`,
+      'Diff:',
+      diff,
+    ].filter(part => part !== undefined).join('\n\n')
+    let text = ''
+    for await (const chunk of llm.stream({
+      provider: parsed.provider,
+      model: parsed.model,
+      ...(parsed.effort === undefined || parsed.effort === '' ? {} : { reasoningEffort: parsed.effort }),
+      messages: [{ role: 'user', content: [{ type: 'text', text: userText }] }],
+      system: 'You write git commit messages. Reply with the message ONLY: one conventional-commit subject line (matching the repository language), optionally followed by a blank line and a short body of bullet points. No explanations, no markdown fences.',
+      temperature: 0.2,
+      maxTokens: 500,
+    })) {
+      if (chunk.type === 'text-delta') text += chunk.text ?? ''
+    }
+    text = text.replace(/^```[a-z]*\n?|```\n?$/g, '').trim()
+    if (text === '') return fail(502, 'the model returned an empty message')
+    if (text.length > AI_MESSAGE_LIMIT) text = text.slice(0, AI_MESSAGE_LIMIT)
+    return { status: 200, body: { message: text } }
+  } catch (error) {
+    return checkoutFailure(error)
   }
 }

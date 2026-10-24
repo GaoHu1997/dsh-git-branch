@@ -29,3 +29,4 @@
 - [0010 — GitHub Actions 承担 CI 与 tag 触发的 npm 发布](0010-github-actions-ci-and-npm-release.md)
 - [0011 — 设置面板按 Host 条目 id 读取插件配置](0011-settings-use-host-entry-id.md)
 - [0012 — 发布 v1.0.2 补丁版本](0012-release-v1.0.2.md)
+- [0013 — Git 管理面板（侧边栏全局面板 + 提交操作 + AI 提交信息）](0013-git-history-panel.md)

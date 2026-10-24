@@ -41,8 +41,11 @@ import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 // Type-only: pulls the locale plugin's Context merge (ctx.locale).
 import type {} from '@deepseek-ai/dsh-client-locale/client'
+import { createElement } from 'react'
+import { IconBranchOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { BranchChipDock } from './BranchChip.tsx'
 import { CardForm, type SectionValue } from './card-form.ts'
+import { GitPanelTab } from './GitHistoryPanel.tsx'
 import { GitWorktreeCard } from './GitWorktreeCard.tsx'
 import type { WorktreeManagerFace } from './WorktreeManagerModal.tsx'
 import { requestEnsureDirectory, requestGroupWorktrees, requestInspectWorktree, requestPathExists, requestPurgeDirectory, requestRemoveWorktree, requestWorktreesAll } from './api.ts'
@@ -50,6 +53,7 @@ import { en, zh, type GitWorktreeKey } from './locales.ts'
 import { pathKey, freshestUpdatedAt, planPrune, runAutoPrune } from './worktree-prune.ts'
 import { removeWorktreeFully } from './worktree-remove-flow.ts'
 import { recordPruneRun } from './prune-history.ts'
+import type { BetterSidebarService, PanelHostContext, SidebarTabScope } from './panel-types.ts'
 import type { BranchChipInjected } from './slots.ts'
 
 export type { BranchChipInjected } from './slots.ts'
@@ -71,6 +75,12 @@ const NS = 'git-worktree'
  * because the browser bundle must not import the Host plugin.
  */
 const PLUGIN_ENTRY_ID = 'dsh-git-branch'
+
+/**
+ * The Git panel's identity: the sidebar row id and the matching `main` panel
+ * key. Package-local on purpose — the slot addresses stay inside the bundle.
+ */
+const PANEL_ID = 'git-history'
 
 /**
  * This package's own name — the key `plugins.bundle.config` dispatches by
@@ -350,4 +360,32 @@ export function apply(ctx: ClientContext): void {
     unsubscribeDescribe()
     if (configDisposer !== undefined) configDisposer()
   }, 'git-worktree: plugin config card lifecycle')
+
+  /* ------------------------------------------------------------------
+   * Git panel: a tab in the dsh-better-sidebar right sidebar. That plugin
+   * publishes `ctx.betterSidebar`, a registry other plugins contribute
+   * sidebar tabs through (the 文件/Git/终端 cards in the expanded right
+   * sidebar are its doing) — one registerTab call is the whole
+   * integration. better-sidebar is OPTIONAL: the dependency waits through
+   * ctx.inject, so a deployment without it shows no card while the chip
+   * and settings card keep working. The disposer rides our fiber through
+   * ctx.effect, so a plugin reload retracts the tab type cleanly.
+   * ------------------------------------------------------------------ */
+  ctx.inject(['betterSidebar'], (betterCtx) => {
+    const better = (betterCtx as unknown as { betterSidebar: BetterSidebarService }).betterSidebar
+    const panelT = ctx.locale.bind(NS)
+    ctx.effect(() => better.registerTab({
+      id: PANEL_ID,
+      title: () => panelT('panel.nav'),
+      description: () => panelT('panel.description'),
+      icon: (size: number) => createElement(IconBranchOutlineRegular, { size }),
+      order: 150,
+      single: true,
+      component: (tabProps: { scope: SidebarTabScope }) => createElement(GitPanelTab, {
+        ctx: betterCtx as unknown as PanelHostContext,
+        scope: tabProps.scope,
+        t: panelT,
+      }),
+    }), 'git-worktree: better-sidebar tab')
+  })
 }

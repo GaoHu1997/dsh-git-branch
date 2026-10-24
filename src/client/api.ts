@@ -5,9 +5,9 @@
  */
 
 import type {
-  CreateBranchResult, CreateWorktreeResult, DeleteBranchResult, EnsureDirectoryResult, FetchResult, GroupWorkspacesResult, InspectWorktreeResult, PathExistsResult, PurgeDirectoryResult, RemoveWorktreeResult, RenameBranchResult, RepoStatus, RouteError, SwitchResult, UpdateResult, PushResult, WorktreesAllResult,
+  AiCommitMessageBody, AiCommitMessageResult, ChangesResult, CommitFilesResult, CommitResult, CreateBranchResult, CreateWorktreeResult, DeleteBranchResult, EnsureDirectoryResult, FetchResult, GroupWorkspacesResult, InspectWorktreeResult, LogResult, PathExistsResult, PurgeDirectoryResult, RemoveWorktreeResult, RenameBranchResult, RepoStatus, RouteError, StageBody, StageResult, SwitchResult, UpdateResult, PushResult, WorktreesAllResult,
 } from '../wire.ts'
-import { ROUTE_BRANCH, ROUTE_BRANCH_DELETE, ROUTE_BRANCH_RENAME, ROUTE_ENSURE_DIRECTORY, ROUTE_EXISTS, ROUTE_FETCH, ROUTE_GROUP, ROUTE_INSPECT, ROUTE_PUSH, ROUTE_PURGE, ROUTE_REMOVE, ROUTE_STATUS, ROUTE_SWITCH, ROUTE_UPDATE, ROUTE_WORKTREE, ROUTE_WORKTREES_ALL } from '../wire.ts'
+import { ROUTE_AI_COMMIT_MESSAGE, ROUTE_BRANCH, ROUTE_BRANCH_DELETE, ROUTE_BRANCH_RENAME, ROUTE_CHANGES, ROUTE_COMMIT, ROUTE_COMMIT_FILES, ROUTE_ENSURE_DIRECTORY, ROUTE_EXISTS, ROUTE_FETCH, ROUTE_GROUP, ROUTE_INSPECT, ROUTE_LOG, ROUTE_PUSH, ROUTE_PURGE, ROUTE_REMOVE, ROUTE_STAGE, ROUTE_STATUS, ROUTE_SWITCH, ROUTE_UPDATE, ROUTE_WORKTREE, ROUTE_WORKTREES_ALL } from '../wire.ts'
 
 /** One route call outcome: the parsed body, or the error envelope text. */
 type Call<T> = (T & { ok: true }) | { ok: false; error: string }
@@ -220,4 +220,66 @@ export function requestWorktreesAll(workspaces?: readonly string[]): Promise<Cal
  */
 export function requestPurgeDirectory(path: string): Promise<Call<PurgeDirectoryResult>> {
   return post<PurgeDirectoryResult>(ROUTE_PURGE, { path })
+}
+
+/**
+ * Working-tree changes of one checkout (staged/unstaged/untracked rows).
+ * @param repoPath - absolute directory inside the repository.
+ */
+export function requestChanges(repoPath: string): Promise<Call<ChangesResult>> {
+  return post<ChangesResult>(ROUTE_CHANGES, { repoPath })
+}
+
+/**
+ * Stage or unstage relative paths of one checkout.
+ * @param repoPath - absolute directory inside the repository.
+ * @param paths - relative paths from requestChanges output.
+ * @param stage - true stages (git add), false unstages (git reset).
+ */
+export function requestStage(repoPath: string, paths: readonly string[], stage: boolean): Promise<Call<StageResult>> {
+  return post<StageResult>(ROUTE_STAGE, { repoPath, paths: [...paths], stage } satisfies StageBody)
+}
+
+/**
+ * Commit the index with a message.
+ * @param repoPath - absolute directory inside the repository.
+ * @param message - the commit message, verbatim.
+ */
+export function requestCommit(repoPath: string, message: string): Promise<Call<CommitResult>> {
+  return post<CommitResult>(ROUTE_COMMIT, { repoPath, message })
+}
+
+/**
+ * One page of commit history of the checkout.
+ * @param repoPath - absolute directory inside the repository.
+ * @param limit - page size (server-capped at 200).
+ * @param skip - offset into the history.
+ * @param ref - optional starting rev (a branch name); absent = HEAD.
+ */
+export function requestLog(repoPath: string, limit?: number, skip?: number, ref?: string): Promise<Call<LogResult>> {
+  return post<LogResult>(ROUTE_LOG, {
+    repoPath,
+    ...(limit === undefined ? {} : { limit }),
+    ...(skip === undefined ? {} : { skip }),
+    ...(ref === undefined || ref === '' ? {} : { ref }),
+  })
+}
+
+/**
+ * The files one commit changed (status letter + +/- line counts).
+ * @param repoPath - absolute directory inside the repository.
+ * @param hash - the commit hash.
+ */
+export function requestCommitFiles(repoPath: string, hash: string): Promise<Call<CommitFilesResult>> {
+  return post<CommitFilesResult>(ROUTE_COMMIT_FILES, { repoPath, hash })
+}
+
+/**
+ * Generate a commit message from the checkout's diff with the requesting
+ * session's own model (a one-shot host llm call).
+ * @param body - the repo path plus the session's model selection and an
+ * optional user hint.
+ */
+export function requestAiCommitMessage(body: AiCommitMessageBody): Promise<Call<AiCommitMessageResult>> {
+  return post<AiCommitMessageResult>(ROUTE_AI_COMMIT_MESSAGE, body)
 }

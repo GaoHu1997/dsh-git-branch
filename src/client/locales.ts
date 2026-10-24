@@ -133,6 +133,66 @@ export type GitWorktreeKey =
   | 'copy'
   | 'close'
   | 'cancel'
+  | 'panel.nav'
+  | 'panel.description'
+  | 'panel.notARepo'
+  | 'panel.noSession'
+  | 'panel.loadFailed'
+  | 'panel.retry'
+  | 'panel.refresh'
+  | 'panel.uncommitted'
+  | 'panel.staged'
+  | 'panel.unstaged'
+  | 'panel.stageAll'
+  | 'panel.unstageAll'
+  | 'panel.stageHint'
+  | 'panel.unstageHint'
+  | 'panel.clean'
+  | 'panel.changesTruncated'
+  | 'panel.commitPlaceholder'
+  | 'panel.commit'
+  | 'panel.commitPush'
+  | 'panel.commitMoreAria'
+  | 'panel.commitBusy'
+  | 'panel.commitDone'
+  | 'panel.commitPushDone'
+  | 'panel.commitNeedsStaged'
+  | 'panel.commitNeedsMessage'
+  | 'panel.aiGenerate'
+  | 'panel.aiBusy'
+  | 'panel.aiNeedsChanges'
+  | 'panel.aiDone'
+  | 'panel.aiFailed'
+  | 'panel.branches'
+  | 'panel.branchNew'
+  | 'panel.branchLocals'
+  | 'panel.branchRemotes'
+  | 'panel.branchCheckout'
+  | 'panel.branchCheckoutRemote'
+  | 'panel.branchNewFrom'
+  | 'panel.branchRename'
+  | 'panel.branchDelete'
+  | 'panel.branchCopy'
+  | 'panel.branchCurrent'
+  | 'panel.checkoutDone'
+  | 'panel.renameDone'
+  | 'panel.deleteDone'
+  | 'panel.createDone'
+  | 'panel.history'
+  | 'panel.historySearch'
+  | 'panel.noCommits'
+  | 'panel.noMatches'
+  | 'panel.loadMore'
+  | 'panel.filesTitle'
+  | 'panel.binary'
+  | 'panel.stAdd'
+  | 'panel.stMod'
+  | 'panel.stDel'
+  | 'panel.stRen'
+  | 'panel.stCopy'
+  | 'panel.stType'
+  | 'panel.stUntrack'
+  | 'panel.stUnmerged'
 
 /** English dictionary — complete by construction. */
 export const en: Record<GitWorktreeKey, string> = {
@@ -263,6 +323,66 @@ export const en: Record<GitWorktreeKey, string> = {
   copy: 'Copy',
   close: 'Close',
   cancel: 'Cancel',
+  'panel.nav': 'Git panel',
+  'panel.description': 'Uncommitted changes, branches, and commit history',
+  'panel.notARepo': 'The current session is not inside a git repository.',
+  'panel.noSession': 'Open a session in a repository to see its git panel.',
+  'panel.loadFailed': 'Git panel failed to load: {message}',
+  'panel.retry': 'Retry',
+  'panel.refresh': 'Refresh',
+  'panel.uncommitted': 'Uncommitted changes',
+  'panel.staged': 'Staged',
+  'panel.unstaged': 'Unstaged',
+  'panel.stageAll': 'Stage all',
+  'panel.unstageAll': 'Unstage all',
+  'panel.stageHint': 'git add',
+  'panel.unstageHint': 'git reset',
+  'panel.clean': 'No uncommitted changes',
+  'panel.changesTruncated': 'Too many changes — showing only the first 500 rows',
+  'panel.commitPlaceholder': 'Commit message (feat: …)',
+  'panel.commit': 'Commit',
+  'panel.commitPush': 'Commit and push',
+  'panel.commitMoreAria': 'More commit actions',
+  'panel.commitBusy': 'Committing…',
+  'panel.commitDone': 'Committed: {subject}',
+  'panel.commitPushDone': 'Committed and pushed: {subject}',
+  'panel.commitNeedsStaged': 'Tick files to stage them first',
+  'panel.commitNeedsMessage': 'Enter a commit message',
+  'panel.aiGenerate': 'AI message',
+  'panel.aiBusy': 'Generating…',
+  'panel.aiNeedsChanges': 'Stage some changes first, then generate',
+  'panel.aiDone': 'AI drafted a message — review and edit before committing',
+  'panel.aiFailed': 'AI message failed: {message}',
+  'panel.branches': 'Branches',
+  'panel.branchNew': 'New branch',
+  'panel.branchLocals': 'local',
+  'panel.branchRemotes': 'remote',
+  'panel.branchCheckout': 'Check out',
+  'panel.branchCheckoutRemote': 'Check out (create local tracking branch)',
+  'panel.branchNewFrom': 'New branch from here…',
+  'panel.branchRename': 'Rename…',
+  'panel.branchDelete': 'Delete',
+  'panel.branchCopy': 'Copy name',
+  'panel.branchCurrent': 'current branch',
+  'panel.checkoutDone': 'Checked out {branch}',
+  'panel.renameDone': 'Renamed to {branch}',
+  'panel.deleteDone': 'Deleted branch {branch}',
+  'panel.createDone': 'Created branch {branch}',
+  'panel.history': 'Commit history',
+  'panel.historySearch': 'Search commits / authors',
+  'panel.noCommits': 'This repository has no commits yet',
+  'panel.noMatches': 'No matching commits',
+  'panel.loadMore': 'Load more',
+  'panel.filesTitle': 'Changed files ({n}) · {author} · {date}',
+  'panel.binary': 'binary',
+  'panel.stAdd': 'added',
+  'panel.stMod': 'modified',
+  'panel.stDel': 'deleted',
+  'panel.stRen': 'renamed',
+  'panel.stCopy': 'copied',
+  'panel.stType': 'type changed',
+  'panel.stUntrack': 'untracked',
+  'panel.stUnmerged': 'conflict',
 }
 
 /** 中文词典。 */
@@ -394,4 +514,64 @@ export const zh: Record<GitWorktreeKey, string> = {
   copy: '复制',
   close: '关闭',
   cancel: '取消',
+  'panel.nav': 'Git 管理',
+  'panel.description': '未提交变更、分支操作与提交历史',
+  'panel.notARepo': '当前会话不在 git 仓库中。',
+  'panel.noSession': '在 git 仓库中打开一个会话后，这里会显示它的 Git 面板。',
+  'panel.loadFailed': 'Git 面板加载失败：{message}',
+  'panel.retry': '重试',
+  'panel.refresh': '刷新',
+  'panel.uncommitted': '未提交变更',
+  'panel.staged': '已暂存',
+  'panel.unstaged': '未暂存',
+  'panel.stageAll': '全部暂存',
+  'panel.unstageAll': '全部取消暂存',
+  'panel.stageHint': 'git add',
+  'panel.unstageHint': 'git reset',
+  'panel.clean': '没有未提交的变更',
+  'panel.changesTruncated': '变更过多，仅显示前 500 行',
+  'panel.commitPlaceholder': '提交信息（feat: …）',
+  'panel.commit': '提交',
+  'panel.commitPush': '提交并推送',
+  'panel.commitMoreAria': '更多提交操作',
+  'panel.commitBusy': '提交中…',
+  'panel.commitDone': '已提交：{subject}',
+  'panel.commitPushDone': '已提交并推送：{subject}',
+  'panel.commitNeedsStaged': '先勾选文件加入暂存区',
+  'panel.commitNeedsMessage': '填写提交信息后提交',
+  'panel.aiGenerate': 'AI 生成',
+  'panel.aiBusy': '生成中…',
+  'panel.aiNeedsChanges': '先暂存一些变更再生成',
+  'panel.aiDone': 'AI 已生成提交信息，请检查后提交',
+  'panel.aiFailed': 'AI 生成失败：{message}',
+  'panel.branches': '分支',
+  'panel.branchNew': '新建分支',
+  'panel.branchLocals': '本地',
+  'panel.branchRemotes': '远程',
+  'panel.branchCheckout': '检出',
+  'panel.branchCheckoutRemote': '检出（新建本地跟踪分支）',
+  'panel.branchNewFrom': '新建分支自此…',
+  'panel.branchRename': '重命名…',
+  'panel.branchDelete': '删除',
+  'panel.branchCopy': '复制名称',
+  'panel.branchCurrent': '当前分支',
+  'panel.checkoutDone': '已检出 {branch}',
+  'panel.renameDone': '已重命名为 {branch}',
+  'panel.deleteDone': '已删除分支 {branch}',
+  'panel.createDone': '已创建分支 {branch}',
+  'panel.history': '提交历史',
+  'panel.historySearch': '搜索提交 / 作者',
+  'panel.noCommits': '仓库还没有提交',
+  'panel.noMatches': '没有匹配的提交',
+  'panel.loadMore': '加载更多',
+  'panel.filesTitle': '变更文件（{n}）· {author} · {date}',
+  'panel.binary': '二进制',
+  'panel.stAdd': '新增',
+  'panel.stMod': '修改',
+  'panel.stDel': '删除',
+  'panel.stRen': '重命名',
+  'panel.stCopy': '复制',
+  'panel.stType': '类型变更',
+  'panel.stUntrack': '未跟踪',
+  'panel.stUnmerged': '冲突',
 }
