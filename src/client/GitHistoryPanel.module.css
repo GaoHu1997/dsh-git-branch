@@ -115,12 +115,13 @@
 }
 
 /* The page column below the topbar is a definite-height flex column and the
- * three cards split it 2:1:1 (uncommitted : branches : history); the topbar
- * and the gaps are the fifth share. Each body scrolls INSIDE its share —
- * min-height: 0 is what lets a flex child shrink below its content (the old
- * natural-height model painted overflowing rows over the sections below).
- * A floor keeps a very short panel from collapsing a card to its bare head;
- * past the floor the column itself scrolls. */
+ * three cards split it 2:1:2 (uncommitted : branches : history) — five
+ * shares, the topbar and gaps taking their natural height first. Each body
+ * scrolls INSIDE its share — min-height: 0 is what lets a flex child shrink
+ * below its content (the old natural-height model painted overflowing rows
+ * over the sections below). A floor keeps a very short panel from
+ * collapsing a card to its bare head; past the floor the column itself
+ * scrolls. */
 .section {
   border: 0.5px solid var(--dsw-alias-border-l2);
   border-radius: 10px;
@@ -135,8 +136,13 @@
   min-height: 84px;
 }
 
-/* The uncommitted card takes two of the shares. */
+/* The uncommitted card takes two of the five shares. */
 .sectionChanges {
+  flex-grow: 2;
+}
+
+/* So does the history card. */
+.sectionHistory {
   flex-grow: 2;
 }
 

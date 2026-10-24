@@ -192,7 +192,7 @@ export function HistorySection(props: HistorySectionProps): JSX.Element {
   const visible = filterCommits(commits, query)
 
   return (
-    <section className={`${css.section} ${css.sectionFill}`} aria-label={t('panel.history')}>
+    <section className={`${css.section} ${css.sectionFill} ${css.sectionHistory}`} aria-label={t('panel.history')}>
       <div className={css.historyHead}>
         <h2 className={css.sectionTitle}>{t('panel.history')}</h2>
         <div className={css.searchBox}>

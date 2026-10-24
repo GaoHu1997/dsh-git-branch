@@ -4,7 +4,7 @@
  * the draft, and every action arrive as props from the panel state owner, so
  * this file renders and never talks to git itself.
  *
- * The card takes two shares of the panel's fixed 2:1:1 split: the file lists
+ * The card takes two shares of the panel's fixed 2:1:2 split: the file lists
  * scroll inside their own region while the commit box stays pinned below —
  * a 500-change tree must not bury the commit affordance.
  *
