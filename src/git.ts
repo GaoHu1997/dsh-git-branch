@@ -8,7 +8,7 @@ import { execFile } from 'node:child_process'
 import { existsSync, readdirSync } from 'node:fs'
 import { appendFile, mkdir, readFile, rm } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, normalize, resolve } from 'node:path'
-import { localBranchName } from './normalize.js'
+import { accelerateUrlError, localBranchName, normalizeAccelerateUrl } from './normalize.js'
 import type { BranchEntry, WorktreeEntry, WorkspaceGitFacts } from './wire.js'
 
 /** One process result as the seam reports it. */
@@ -533,6 +533,24 @@ export async function deleteBranch(exec: Exec, repoRoot: string, name: string): 
 }
 
 /**
+ * argv prefix for network READ commands when cn-accelerate is on: the
+ * per-command `url.<base>.insteadOf=https://github.com/` rewrite. Per-command
+ * `git -c` (before the subcommand) rather than the user's global git config —
+ * the plugin must never persist settings on the user's behalf, and one
+ * injected value cannot leak into unrelated git runs. Rewrites
+ * `https://github.com/o/r.git` → `<base>https://github.com/o/r.git`, which is
+ * how public mirror prefixes consume GitHub URLs.
+ * @param prefix - the accelerate URL (raw or normalized); undefined = off.
+ * @returns the `-c` pair to prepend, or `[]` when off or the value is
+ * unusable (an invalid value fails SAFE to a direct connection — config
+ * validation rejects such values at load; this is the defensive path).
+ */
+export function accelArgs(prefix: string | undefined): readonly string[] {
+  if (prefix === undefined || accelerateUrlError(prefix) !== undefined) return []
+  return ['-c', `url.${normalizeAccelerateUrl(prefix)}.insteadOf=https://github.com/`]
+}
+
+/**
  * Sync remote-tracking refs: fetch every remote and prune tracking branches
  * the remotes no longer carry (the CLI equivalent of IDEA's "synchronize
  * remote branches"). Pure metadata — the working tree, local branches, and
@@ -540,9 +558,11 @@ export async function deleteBranch(exec: Exec, repoRoot: string, name: string): 
  * executor's hard timeout as a GitError.
  * @param exec - executor seam.
  * @param repoRoot - main worktree directory (fetch is repository-wide).
+ * @param accelPrefix - optional cn-accelerate mirror prefix (see
+ * {@link accelArgs}); only the READ half of the network commands gets it.
  */
-export async function fetchAll(exec: Exec, repoRoot: string): Promise<void> {
-  await git(exec, repoRoot, ['fetch', '--all', '--prune'], NETWORK_TIMEOUT_MS)
+export async function fetchAll(exec: Exec, repoRoot: string, accelPrefix?: string): Promise<void> {
+  await git(exec, repoRoot, [...accelArgs(accelPrefix), 'fetch', '--all', '--prune'], NETWORK_TIMEOUT_MS)
 }
 
 /** Outcome of {@link updateBranch}: the branch touched and whether it moved. */
@@ -562,11 +582,13 @@ export interface UpdateOutcome {
  * branch ITS worktree holds.
  * @param exec - executor seam.
  * @param cwd - directory whose checked-out branch is updated.
+ * @param accelPrefix - optional cn-accelerate mirror prefix; feeds ONLY the
+ * fetch phase ({@link fetchAll}) — the `--ff-only` merge is local.
  * @returns the branch name and whether HEAD actually moved (false = the
  * upstream already contained it).
  */
-export async function updateBranch(exec: Exec, cwd: string): Promise<UpdateOutcome> {
-  await fetchAll(exec, cwd)
+export async function updateBranch(exec: Exec, cwd: string, accelPrefix?: string): Promise<UpdateOutcome> {
+  await fetchAll(exec, cwd, accelPrefix)
   const before = (await git(exec, cwd, ['rev-parse', 'HEAD'])).trim()
   await git(exec, cwd, ['merge', '--ff-only', '@{u}'])
   const after = (await git(exec, cwd, ['rev-parse', 'HEAD'])).trim()
@@ -587,7 +609,11 @@ export interface PushOutcome {
  * git's own message rather than silently picking one), and `--force` is
  * never passed — a diverged remote refuses rather than losing commits.
  * Runs at the queried directory's own toplevel, so a linked-worktree
- * session pushes the branch ITS worktree holds.
+ * session pushes the branch ITS worktree holds. The cn-accelerate rewrite is
+ * deliberately NEVER injected here (no {@link accelArgs} parameter exists):
+ * public mirrors have no `receive-pack`, and rewriting would turn a
+ * diagnosable direct failure into an opaque mirror failure while leaking the
+ * pushed content to a third party.
  * @param exec - executor seam.
  * @param cwd - directory whose checked-out branch is pushed.
  * @returns the branch and whether the remote-tracking ref changed. A branch

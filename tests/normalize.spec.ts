@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { branchNameIssue, isAbsoluteConfigPath, localBranchName, sanitizeBranchDir, splitRemoteBranch } from '../src/normalize.ts'
+import { ACCEL_DEFAULT_URL, accelerateUrlError, branchNameIssue, isAbsoluteConfigPath, localBranchName, normalizeAccelerateUrl, sanitizeBranchDir, splitRemoteBranch } from '../src/normalize.ts'
 
 describe('sanitizeBranchDir', () => {
   it('keeps plain names unchanged', () => {
@@ -104,5 +104,43 @@ describe('branchNameIssue', () => {
     expect(branchNameIssue('feat/.hidden')).toBe('illegal')
     expect(branchNameIssue('feat/x.lock')).toBe('illegal')
     expect(branchNameIssue('@')).toBe('illegal')
+  })
+})
+
+describe('accelerateUrlError', () => {
+  it('accepts trimmed http(s) URLs without whitespace', () => {
+    expect(accelerateUrlError('https://gh-proxy.com/')).toBeUndefined()
+    expect(accelerateUrlError('http://mirror.example')).toBeUndefined()
+    expect(accelerateUrlError('  https://gh-proxy.com/  ')).toBeUndefined()
+  })
+
+  it('flags empty and whitespace-only drafts as empty', () => {
+    expect(accelerateUrlError('')).toBe('empty')
+    expect(accelerateUrlError('   ')).toBe('empty')
+  })
+
+  it('rejects non-http(s) schemes', () => {
+    expect(accelerateUrlError('gh-proxy.com')).toBe('invalid')
+    expect(accelerateUrlError('ftp://mirror.example/')).toBe('invalid')
+    expect(accelerateUrlError('file:///tmp/')).toBe('invalid')
+  })
+
+  it('rejects embedded whitespace before it can smuggle a second argument', () => {
+    expect(accelerateUrlError('https://mirror.example/a b')).toBe('invalid')
+    expect(accelerateUrlError('https://mirror.example/\t-x')).toBe('invalid')
+  })
+})
+
+describe('normalizeAccelerateUrl', () => {
+  it('trims and appends the trailing slash the prefix needs', () => {
+    expect(normalizeAccelerateUrl('https://gh-proxy.com')).toBe('https://gh-proxy.com/')
+    expect(normalizeAccelerateUrl('  https://gh-proxy.com/  ')).toBe('https://gh-proxy.com/')
+    expect(normalizeAccelerateUrl('https://mirror.example/prefix/')).toBe('https://mirror.example/prefix/')
+    expect(normalizeAccelerateUrl('https://mirror.example/prefix')).toBe('https://mirror.example/prefix/')
+  })
+
+  it('ships a default that is already a normalized prefix', () => {
+    expect(ACCEL_DEFAULT_URL).toBe('https://gh-proxy.com/')
+    expect(normalizeAccelerateUrl(ACCEL_DEFAULT_URL)).toBe(ACCEL_DEFAULT_URL)
   })
 })

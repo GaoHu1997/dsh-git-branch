@@ -45,6 +45,7 @@ import { createElement } from 'react'
 import { IconBranchOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { BranchChipDock } from './BranchChip.tsx'
 import { CardForm, type SectionValue } from './card-form.ts'
+import { AccelForm, type AccelFace } from './accel-form.ts'
 import { GitPanelTab } from './GitHistoryPanel.tsx'
 import { GitWorktreeCard } from './GitWorktreeCard.tsx'
 import type { WorktreeManagerFace } from './WorktreeManagerModal.tsx'
@@ -325,6 +326,11 @@ export function apply(ctx: ClientContext): void {
 
   const form = new CardForm(settingsForm)
   const store = form.bind()
+  // The cn-accelerate unit: ONE staged form over the same Host entry,
+  // shared by the git panel popover and the settings card row. The face
+  // (store + prefixed actions) is handed to both surfaces as plain props.
+  const accelForm = new AccelForm(settingsForm)
+  const accelFace: AccelFace = { store: accelForm.bind(), ...accelForm.actions() }
   // The Plugins page dispatches a bundle's own configuration by the bundle's
   // PACKAGE NAME (this package — see cordis.patch.yml), rendered on the
   // bundle's page under `view: 'page'` and previewed under 'summary'.
@@ -343,8 +349,9 @@ export function apply(ctx: ClientContext): void {
         key: PLUGIN_PACKAGE,
         locale: NS,
         inject: () => ({
-          hooks: { gitWorktreeCard: store },
+          hooks: { gitWorktreeCard: store, gitWorktreeAccel: accelFace.store },
           ...form.actions(),
+          ...accelForm.actions(),
           manager: managerFace(),
         }),
       }, GitWorktreeCard))
@@ -391,6 +398,7 @@ export function apply(ctx: ClientContext): void {
         ctx: betterCtx as unknown as PanelHostContext,
         scope: tabProps.scope,
         t: panelT,
+        accel: accelFace,
       }),
     }), 'git-worktree: better-sidebar tab')
   })

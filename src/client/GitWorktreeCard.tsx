@@ -19,6 +19,7 @@ import { useEffect, useState } from 'react'
 import type { PluginConfigViewProps } from '@deepseek-ai/dsh-client-ui-plugin-manager/client'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { CardActions, CardStore } from './card-form.ts'
+import type { AccelActions, AccelStore } from './accel-form.ts'
 import { readPruneHistory, type PruneRunEntry } from './prune-history.ts'
 import { timeLabel } from './relative-time.ts'
 import { WorktreeManagerModal, type WorktreeManagerFace } from './WorktreeManagerModal.tsx'
@@ -31,11 +32,15 @@ export type GitWorktreeCardProps =
   & InjectFace<GitWorktreeCardFace>
   & PluginConfigViewProps
 
-/** The registration-side face this slot entry injects. */
-export interface GitWorktreeCardFace extends CardActions {
+/** The registration-side face this slot entry injects. The cn-accelerate
+ * actions carry the `Accel` prefix (see {@link ../accel-form}); its store
+ * rides the hooks compartment as the second selector hook. */
+export interface GitWorktreeCardFace extends CardActions, AccelActions {
   hooks: {
     /** Card snapshot bound by the renderer as useGitWorktreeCard. */
     gitWorktreeCard: CardStore
+    /** The shared cn-accelerate form, bound as useGitWorktreeAccel. */
+    gitWorktreeAccel: AccelStore
   }
   /** The worktree manager dialog's face (scan, inspect, shared removal). */
   manager: WorktreeManagerFace
@@ -100,6 +105,7 @@ export function GitWorktreeCard(props: GitWorktreeCardProps) {
   const shownHistory = historyAll ? history : history.slice(0, HISTORY_PREVIEW)
   const { t } = props
   const state = props.useGitWorktreeCard(snapshot => snapshot)
+  const accelState = props.useGitWorktreeAccel(snapshot => snapshot)
   if (!state.available) return null
   if (!onPage) {
     return <p className={css.summary}>{t('cardDescription')}</p>
@@ -107,8 +113,14 @@ export function GitWorktreeCard(props: GitWorktreeCardProps) {
   const lockInput = !state.writable
   // The keep draft failing validation blocks the save outright: an integer
   // >= 1 is the only shape the Host accepts, so the button disables in
-  // lockstep with the inline hint.
-  const lockActions = !state.dirty || state.saving || !state.keepWorktreesValid
+  // lockstep with the inline hint. The cn-accelerate pair rides the SAME
+  // buttons (one footer commits both units), so an unusable URL draft also
+  // blocks the save.
+  const lockActions = (!state.dirty && !accelState.dirty)
+    || state.saving
+    || accelState.saving
+    || !state.keepWorktreesValid
+    || accelState.urlError !== null
   const legacyRootText = storage?.legacyRoot ?? (state.rootDir === '' ? '—' : state.rootDir)
 
   return (
@@ -202,6 +214,44 @@ export function GitWorktreeCard(props: GitWorktreeCardProps) {
         />
         <span className={css.toggleHint}>{t('cardPostCreateCopyFilesHint')}</span>
       </label>
+      {/* Cn-accelerate (国内加速): the shared staged form's second surface —
+        * the git panel popover edits the same pair. The switch and the URL
+        * stage together and commit together with this card's footer buttons
+        * (「一次生效」), so a half-written pair can never reach the Host. */}
+      <label className={`${css.field} ${css.toggleRow}`}>
+        <span className={css.toggleText}>
+          <span className={css.toggleLabel}>{t('panel.cnAccelerate')}</span>
+          <span className={css.toggleHint}>{t('accel.hint')}</span>
+        </span>
+        <span className={css.toggleControl}>
+          <input
+            className={css.toggle}
+            type="checkbox"
+            disabled={lockInput || accelState.saving}
+            checked={accelState.enabled}
+            onChange={event => { props.setAccelEnabled(event.target.checked) }}
+          />
+        </span>
+      </label>
+      <label className={`${css.field} ${css.copyFilesRow}`} htmlFor="git-worktree-card-accel-url">
+        <span className={css.fieldLabel}>{t('accel.urlLabel')}</span>
+        <input
+          id="git-worktree-card-accel-url"
+          className={css.accelInput}
+          type="text"
+          spellCheck={false}
+          disabled={lockInput || accelState.saving}
+          value={accelState.urlText}
+          onChange={event => { props.editAccelUrl(event.target.value) }}
+        />
+        {accelState.urlError !== null
+          ? (
+            <span className={css.keepBad} role="alert">
+              {accelState.urlError === 'empty' ? t('accel.urlEmpty') : t('accel.urlInvalid')}
+            </span>
+          )
+          : null}
+      </label>
       {/* The auto-prune's audit trail (browser-local, newest first):
         * which run removed whose worktrees, so a misjudged activity
         * is discoverable after the toast has faded. Read once per page
@@ -258,11 +308,14 @@ export function GitWorktreeCard(props: GitWorktreeCardProps) {
         {state.failed
           ? <p className={css.failed} role="status">{t('cardSaveFailed')}</p>
           : null}
+        {accelState.failed
+          ? <p className={css.failed} role="status">{t('accel.saveFailed')}</p>
+          : null}
         <button
           type="button"
           className={css.discard}
           disabled={lockActions}
-          onClick={props.discard}
+          onClick={() => { props.discard(); props.discardAccel() }}
         >
           {t('cardDiscard')}
         </button>
@@ -270,9 +323,9 @@ export function GitWorktreeCard(props: GitWorktreeCardProps) {
           type="button"
           className={css.save}
           disabled={lockActions}
-          onClick={props.save}
+          onClick={() => { props.save(); void props.saveAccel() }}
         >
-          {t(state.saving ? 'cardSaving' : 'cardSave')}
+          {t(state.saving || accelState.saving ? 'cardSaving' : 'cardSave')}
         </button>
       </div>
     </div>

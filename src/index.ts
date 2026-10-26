@@ -15,6 +15,7 @@ import type {} from '@deepseek-ai/dsh-host-webserver'
 // Type-only: pulls the settings Context declaration merge (`ctx.settings`).
 import type {} from '@deepseek-ai/dsh-settings'
 import { childProcessExec } from './git.js'
+import { ACCEL_DEFAULT_URL, accelerateUrlError } from './normalize.js'
 import {
   handleAiCommitMessage, handleChanges, handleCommit, handleCommitFiles, handleCreateBranch, handleCreateWorktree, handleDeleteBranch, handleEnsureDirectory, handleFetch, handleGroupWorktrees, handleInspectWorktree, handleLog, handlePathExists, handlePurgeDirectory, handleRemoveWorktree, handleRenameBranch, handleStage, handleStatus, handleSwitch, handleUpdate, handlePush, handleWorktreesAll,
   type LlmStreamRuntime, type RouteDeps, type RouteOutcome,
@@ -53,6 +54,11 @@ export interface Config {
   /** Post-create configuration files to copy when .worktreeinclude is absent;
    * absent = none. */
   postCreateCopyFiles?: Volatile<string[]> | string[]
+  /** cn-accelerate mirror rewrite for network READ commands (fetch/update);
+   * absent = off. PUSH is never rewritten. */
+  cnAccelerate?: Volatile<boolean> | boolean
+  /** cn-accelerate mirror prefix; absent = the shipped default. */
+  cnAccelerateUrl?: Volatile<string> | string
 }
 
 /** The shipped prune cap (whole storage root, valid git worktrees only). */
@@ -70,12 +76,14 @@ export const Config: z = z.object({
   autoPruneWorktrees: z.boolean().default(false).volatile(),
   keepWorktrees: z.number().default(KEEP_WORKTREES_DEFAULT).volatile(),
   postCreateCopyFiles: z.array(z.string()).default([]).volatile(),
+  cnAccelerate: z.boolean().default(false).volatile(),
+  cnAccelerateUrl: z.string().default(ACCEL_DEFAULT_URL).volatile(),
 })
 
 /** Reject stale or misspelled config keys before defaults can hide them. */
 export function validateConfig(config: Config): void {
   const unknown = Object.keys(config).find(key =>
-    key !== 'rootDir' && key !== 'groupSidebar' && key !== 'fetchBeforeCreate' && key !== 'autoPruneWorktrees' && key !== 'keepWorktrees' && key !== 'postCreateCopyFiles')
+    key !== 'rootDir' && key !== 'groupSidebar' && key !== 'fetchBeforeCreate' && key !== 'autoPruneWorktrees' && key !== 'keepWorktrees' && key !== 'postCreateCopyFiles' && key !== 'cnAccelerate' && key !== 'cnAccelerateUrl')
   if (unknown !== undefined) {
     throw new Error(`GitWorktreeConfig: unknown key "${unknown}"`)
   }
@@ -101,8 +109,26 @@ export function validateConfig(config: Config): void {
       throw new Error('GitWorktreeConfig: "postCreateCopyFiles" must be an array of strings')
     }
   }
+  const cnAccelerate = readVolatile(config.cnAccelerate)
+  if (cnAccelerate !== undefined && typeof cnAccelerate !== 'boolean') {
+    throw new Error('GitWorktreeConfig: "cnAccelerate" must be a boolean')
+  }
+  validateCnAccelerateUrl(readVolatile(config.cnAccelerateUrl))
   validateKeepWorktrees(readVolatile(config.keepWorktrees))
   validateRootDir(root)
+}
+
+/**
+ * The accelerate prefix must be an http(s) URL without whitespace — it is
+ * concatenated with `https://github.com/` into one `url.<base>.insteadOf`
+ * config value, so a space would smuggle arguments and a non-http scheme is
+ * not a fetchable remote. Absent = the shipped default, which passes.
+ */
+export function validateCnAccelerateUrl(value: string | undefined): void {
+  if (value === undefined) return
+  if (typeof value !== 'string' || accelerateUrlError(value) !== undefined) {
+    throw new Error('GitWorktreeConfig: "cnAccelerateUrl" must be an http(s) URL without whitespace')
+  }
 }
 
 /**
@@ -136,6 +162,10 @@ export interface SectionConfig {
   keepWorktrees?: number
   /** Post-create configuration files to copy when .worktreeinclude is absent. */
   postCreateCopyFiles?: string[]
+  /** cn-accelerate mirror rewrite for network READ commands; absent = off. */
+  cnAccelerate?: boolean
+  /** cn-accelerate mirror prefix; absent = the shipped default. */
+  cnAccelerateUrl?: string
 }
 
 
@@ -149,14 +179,18 @@ export function sectionOf(config: Config): SectionConfig {
   const fetchBeforeCreate = readVolatile(config.fetchBeforeCreate)
   const autoPruneWorktrees = readVolatile(config.autoPruneWorktrees)
   const keepWorktrees = readVolatile(config.keepWorktrees)
+  const cnAccelerate = readVolatile(config.cnAccelerate)
+  const cnAccelerateUrl = readVolatile(config.cnAccelerateUrl)
   return {
     ...(rootDir === undefined ? {} : { rootDir }),
     ...(postCreateCopyFiles === undefined ? {} : { postCreateCopyFiles }),
+    ...(cnAccelerateUrl === undefined ? {} : { cnAccelerateUrl }),
     // The composition layer spells the shipped defaults so a user-layer
     // unset can always fall back to them.
     groupSidebar: groupSidebar ?? true,
     fetchBeforeCreate: fetchBeforeCreate ?? false,
     autoPruneWorktrees: autoPruneWorktrees ?? false,
+    cnAccelerate: cnAccelerate ?? false,
     keepWorktrees: keepWorktrees ?? KEEP_WORKTREES_DEFAULT,
   }
 }
@@ -177,6 +211,8 @@ export function apply(ctx: Context, config: Config = {}): void {
     sectionRootDir: () => readVolatile(currentConfig().rootDir),
     sectionFetchBeforeCreate: () => readVolatile(currentConfig().fetchBeforeCreate),
     sectionPostCreateCopyFiles: () => readVolatile(currentConfig().postCreateCopyFiles),
+    sectionCnAccelerate: () => readVolatile(currentConfig().cnAccelerate),
+    sectionCnAccelerateUrl: () => readVolatile(currentConfig().cnAccelerateUrl),
     home: () => homedir(),
     envHome: () => process.env.DSH_HOME,
   })

@@ -1,7 +1,8 @@
 /**
- * Pure branch/path name normalization for worktree directory placement.
- * Windows-forbidden characters are the governing constraint: a worktree
- * folder name must survive on every platform the host runs on.
+ * Pure name/URL normalization shared by the host (git command assembly,
+ * config validation) and the client (forms). Windows-forbidden characters
+ * govern worktree directory placement: a worktree folder name must survive
+ * on every platform the host runs on.
  */
 
 /**
@@ -86,4 +87,41 @@ export function branchNameIssue(name: string): BranchNameIssue | null {
   if (/(^|\/)\./.test(name)) return 'illegal'
   if (/(^|\/)[^/]+\.lock($|\/)/.test(name)) return 'illegal'
   return null
+}
+
+/**
+ * Shipped default for the cn-accelerate mirror prefix (the design doc's
+ * `cnAccelerateUrl` default and the popover's「恢复默认」target).
+ */
+export const ACCEL_DEFAULT_URL = 'https://gh-proxy.com/'
+
+/** Why a user-typed accelerate URL is not acceptable yet (undefined = fine). */
+export type AccelerateUrlIssue = 'empty' | 'invalid'
+
+/**
+ * Pre-flight check of the cn-accelerate prefix against what the rewrite can
+ * actually use: non-empty after trim, `http://` or `https://` scheme, and no
+ * whitespace anywhere (a space would break the `url.<base>.insteadOf=<target>`
+ * git config value and smuggle a second argument).
+ * @param value - raw draft text.
+ * @returns the issue kind, or undefined when the value is acceptable.
+ */
+export function accelerateUrlError(value: string): AccelerateUrlIssue | undefined {
+  const trimmed = value.trim()
+  if (trimmed === '') return 'empty'
+  if (/\s/.test(trimmed)) return 'invalid'
+  if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) return 'invalid'
+  return undefined
+}
+
+/**
+ * Normalize an accepted accelerate URL: trim, and append the trailing `/`
+ * the prefix concatenation requires (`https://gh-proxy.com/` + `o/r.git`
+ * must stay one valid URL). Callers pass the result to `url.<base>.insteadOf`.
+ * @param value - an accepted (non-empty, http(s), whitespace-free) URL.
+ * @returns the prefix ending in `/`.
+ */
+export function normalizeAccelerateUrl(value: string): string {
+  const trimmed = value.trim()
+  return trimmed.endsWith('/') ? trimmed : `${trimmed}/`
 }

@@ -7,7 +7,7 @@ import { basename, dirname, join, resolve } from 'node:path'
 import { mkdir, readdir, rm, stat } from 'node:fs/promises'
 import { runPostCreateCopy, type CopyFilesSeams } from './copy-files.js'
 import { appendWorktreeExclude, fsExcludeSeams, GitError, addWorktree, addWorktreeCutout, collectAiDiff, commitFiles, commitIndex, createBranch, cutoutBranchName, deleteBranch, fetchAll, fsDirExists, inspectWorktree, isAbsoluteDir, isStageablePath, logHistory, probeRepo, probeWorkspaceGit, removeWorktree, renameBranch, resolveBranch, pushBranch, stagePaths, switchBranch, updateBranch, workingChanges, type DirExists, type ExcludeSeams, type Exec } from './git.js'
-import { isAbsoluteConfigPath, sanitizeBranchDir } from './normalize.js'
+import { ACCEL_DEFAULT_URL, accelerateUrlError, isAbsoluteConfigPath, normalizeAccelerateUrl, sanitizeBranchDir } from './normalize.js'
 import { resolveRootDir } from './settings.js'
 import { COMMIT_MESSAGE_LIMIT } from './wire.js'
 import type {
@@ -23,6 +23,10 @@ export interface RouteDeps {
   sectionFetchBeforeCreate: () => boolean | undefined
   /** Post-create configuration files to copy when .worktreeinclude is absent. */
   sectionPostCreateCopyFiles?: () => string[] | undefined
+  /** Whether the cn-accelerate mirror rewrite is on (absent = off). */
+  sectionCnAccelerate?: () => boolean | undefined
+  /** The cn-accelerate mirror prefix (absent = the shipped default). */
+  sectionCnAccelerateUrl?: () => string | undefined
   /** User home directory seam. */
   home: () => string
   /** `$DSH_HOME` environment value seam. */
@@ -81,6 +85,18 @@ export interface RouteOutcome {
 /** Uniform failure envelope. */
 function fail(status: number, error: string): RouteOutcome {
   return { status, body: { error } }
+}
+
+/**
+ * The rewrite prefix for one request's network READ commands: the cn-accelerate
+ * mirror prefix when the switch is on and the URL setting is usable (the
+ * shipped default fills an absent URL), else undefined — no injection and the
+ * direct connection runs unchanged. PUSH never consults this helper.
+ */
+function accelPrefix(deps: RouteDeps): string | undefined {
+  if (deps.sectionCnAccelerate?.() !== true) return undefined
+  const url = deps.sectionCnAccelerateUrl?.() ?? ACCEL_DEFAULT_URL
+  return accelerateUrlError(url) === undefined ? normalizeAccelerateUrl(url) : undefined
 }
 
 /** Upper bound on distinct paths one /group request may probe. */
@@ -453,7 +469,7 @@ export async function handleCreateWorktree(deps: RouteDeps, body: unknown): Prom
       const resolved = await resolveBranch(deps.exec, facts.repoRoot, branch)
       if (resolved?.remote !== undefined) {
         try {
-          await fetchAll(deps.exec, facts.repoRoot)
+          await fetchAll(deps.exec, facts.repoRoot, accelPrefix(deps))
         } catch (error) {
           fetchWarning = error instanceof GitError ? error.stderr.trim() : error instanceof Error ? error.message : String(error)
         }
@@ -658,7 +674,7 @@ export async function handleFetch(deps: RouteDeps, body: unknown): Promise<Route
   try {
     const facts = await probeRepo(deps.exec, repoPath, deps.dirExists)
     if (facts === undefined) return fail(400, `"${repoPath}" is not inside a git repository`)
-    await fetchAll(deps.exec, facts.repoRoot)
+    await fetchAll(deps.exec, facts.repoRoot, accelPrefix(deps))
     const result: FetchResult = { remote: 'all' }
     return { status: 200, body: result }
   } catch (error) {
@@ -687,7 +703,7 @@ export async function handleUpdate(deps: RouteDeps, body: unknown): Promise<Rout
     // session "update current branch" means the branch that worktree holds.
     // `repoRoot` would fast-forward the main checkout behind the user's back
     // (both are the same directory when the session IS the main checkout).
-    const outcome = await updateBranch(deps.exec, facts.toplevel)
+    const outcome = await updateBranch(deps.exec, facts.toplevel, accelPrefix(deps))
     const result: UpdateResult = { branch: outcome.branch, updated: outcome.updated }
     return { status: 200, body: result }
   } catch (error) {

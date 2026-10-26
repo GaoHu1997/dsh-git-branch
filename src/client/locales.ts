@@ -193,6 +193,17 @@ export type GitWorktreeKey =
   | 'panel.stType'
   | 'panel.stUntrack'
   | 'panel.stUnmerged'
+  | 'panel.cnAccelerate'
+  | 'accel.enable'
+  | 'accel.hint'
+  | 'accel.urlLabel'
+  | 'accel.restoreDefault'
+  | 'accel.urlInvalid'
+  | 'accel.urlEmpty'
+  | 'accel.saveFailed'
+  | 'accel.savedOn'
+  | 'accel.savedOff'
+  | 'accel.mirrorDownHint'
 
 /** English dictionary — complete by construction. */
 export const en: Record<GitWorktreeKey, string> = {
@@ -383,6 +394,17 @@ export const en: Record<GitWorktreeKey, string> = {
   'panel.stType': 'type changed',
   'panel.stUntrack': 'untracked',
   'panel.stUnmerged': 'conflict',
+  'panel.cnAccelerate': 'China acceleration',
+  'accel.enable': 'Enable acceleration',
+  'accel.hint': 'Accelerates https github.com remotes for fetch/update only; push is never proxied. The mirror sees repository content — do not use it for private or sensitive repositories.',
+  'accel.urlLabel': 'Acceleration URL',
+  'accel.restoreDefault': 'Restore default',
+  'accel.urlInvalid': 'Enter an http(s):// URL',
+  'accel.urlEmpty': 'Enter an acceleration URL',
+  'accel.saveFailed': 'The change did not save. Try again.',
+  'accel.savedOn': 'China acceleration enabled: {url}',
+  'accel.savedOff': 'China acceleration disabled',
+  'accel.mirrorDownHint': 'If the mirror is down, disable acceleration or change the URL',
 }
 
 /** 中文词典。 */
@@ -574,4 +596,15 @@ export const zh: Record<GitWorktreeKey, string> = {
   'panel.stType': '类型变更',
   'panel.stUntrack': '未跟踪',
   'panel.stUnmerged': '冲突',
+  'panel.cnAccelerate': '国内加速',
+  'accel.enable': '启用加速',
+  'accel.hint': '仅加速 https 的 github.com 仓库地址，作用于提取/更新；推送不走加速。第三方加速站可看到仓库内容，请勿用于私有/敏感仓库。',
+  'accel.urlLabel': '加速地址',
+  'accel.restoreDefault': '恢复默认',
+  'accel.urlInvalid': '请输入以 http(s):// 开头的地址',
+  'accel.urlEmpty': '请输入加速地址',
+  'accel.saveFailed': '保存未生效，请重试。',
+  'accel.savedOn': '已启用国内加速：{url}',
+  'accel.savedOff': '已关闭国内加速',
+  'accel.mirrorDownHint': '若加速地址不可用，可停用国内加速或更换地址',
 }

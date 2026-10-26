@@ -104,6 +104,211 @@
   cursor: default;
 }
 
+/* Cn-accelerate: the topbar 国内加速 button and its anchored popover. The
+ * button's on-state is brand tint + brand text + green dot; the popover
+ * mirrors the settings card's switch/input affordances over this panel's
+ * tokens (popup chrome follows .menu above). */
+
+.cnWrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.cnBtn,
+.cnBtnOn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.cnBtn:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.cnBtnOn {
+  background: rgba(76, 107, 245, 0.16);
+  color: var(--dsw-alias-brand-primary);
+}
+
+.cnBtnOn:hover {
+  background: rgba(76, 107, 245, 0.22);
+  color: var(--dsw-alias-brand-primary);
+}
+
+.cnDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--dsw-alias-status-success, #218358);
+}
+
+.cnPop {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 40;
+  width: 320px;
+  background: var(--dsw-alias-surface-raised, var(--dsw-alias-bg-layer-3));
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: 8px;
+  box-shadow: var(--dsw-shadow-lv3);
+  backdrop-filter: var(--dsw-menu-backdrop-filter);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cnPopHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.cnPopTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+
+.cnSwitchRow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+
+.cnSwitch {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--dsw-alias-brand-primary);
+  cursor: pointer;
+}
+
+.cnSwitch:disabled {
+  cursor: default;
+}
+
+.cnHint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.cnFieldHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.cnFieldLabel {
+  color: var(--dsw-alias-label-primary);
+  font-weight: 500;
+}
+
+.cnLink {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 12px;
+  color: var(--dsw-alias-brand-primary);
+  cursor: pointer;
+}
+
+.cnLink:hover {
+  text-decoration: underline;
+}
+
+.cnLink:disabled {
+  opacity: 0.5;
+  cursor: default;
+  text-decoration: none;
+}
+
+.cnInput,
+.cnInputBad {
+  box-sizing: border-box;
+  width: 100%;
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 8px;
+  outline: none;
+}
+
+.cnInput:focus {
+  border-color: var(--dsw-alias-brand-primary);
+}
+
+.cnInputBad,
+.cnInputBad:focus {
+  border-color: var(--dsw-alias-status-danger, #d5304f);
+}
+
+.cnError {
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-status-danger, #d5304f);
+}
+
+.cnFooter {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.cnGhost,
+.cnSave {
+  border: 0;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 12px;
+  cursor: pointer;
+}
+
+.cnGhost {
+  background: none;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.cnGhost:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.cnSave {
+  background: var(--dsw-alias-brand-primary);
+  color: #fff;
+}
+
+.cnSave:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .scroll {
   flex: 1;
   min-height: 0;

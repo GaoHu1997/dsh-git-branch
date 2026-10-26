@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import type { ConfigForm, ConfigFormSnapshot } from '@deepseek-ai/dsh-client-ui-settings/client'
 import { CardForm, type SectionValue } from '../src/client/card-form.ts'
+import { AccelForm } from '../src/client/accel-form.ts'
+import { ACCEL_DEFAULT_URL } from '../src/normalize.ts'
 
 /**
  * Scripted config form: snapshots the form reads, plus the writes it
@@ -279,5 +281,130 @@ describe('CardForm keep-cap staging', () => {
       postCreateCopyFilesText: '.env',
       dirty: false,
     })
+  })
+})
+
+describe('AccelForm projection', () => {
+  it('projects the shipped default pair while nothing is stored', () => {
+    const scope = new FakeScope({})
+    const form = new AccelForm(scope)
+    expect(form.bind().getSnapshot()).toMatchObject({
+      available: true, writable: true, enabled: false, urlText: ACCEL_DEFAULT_URL,
+      dirty: false, saving: false, failed: false, urlError: null,
+    })
+  })
+
+  it('projects the stored pair over the defaults', () => {
+    const scope = new FakeScope({ cnAccelerate: true, cnAccelerateUrl: 'https://mirror.example/' })
+    const form = new AccelForm(scope)
+    expect(form.bind().getSnapshot()).toMatchObject({
+      enabled: true, urlText: 'https://mirror.example/', dirty: false,
+    })
+  })
+
+  it('reports the URL issue as it is typed', () => {
+    const scope = new FakeScope({})
+    const form = new AccelForm(scope)
+    form.actions().editAccelUrl('gh-proxy.com')
+    expect(form.bind().getSnapshot().urlError).toBe('invalid')
+    form.actions().editAccelUrl('')
+    expect(form.bind().getSnapshot().urlError).toBe('empty')
+    form.actions().editAccelUrl('https://gh-proxy.com/')
+    expect(form.bind().getSnapshot().urlError).toBeNull()
+  })
+})
+
+describe('AccelForm staging', () => {
+  it('stages the switch without writing (the pair commits together)', () => {
+    const scope = new FakeScope({})
+    const form = new AccelForm(scope)
+    form.actions().setAccelEnabled(true)
+    expect(form.bind().getSnapshot()).toMatchObject({ enabled: true, dirty: true })
+    expect(scope.writes).toEqual([])
+  })
+
+  it('restoreAccelDefault stages the default URL without writing', () => {
+    const scope = new FakeScope({ cnAccelerate: true, cnAccelerateUrl: 'https://mirror.example/' })
+    const form = new AccelForm(scope)
+    form.actions().restoreAccelDefault()
+    expect(form.bind().getSnapshot()).toMatchObject({ urlText: ACCEL_DEFAULT_URL, dirty: true })
+    expect(scope.writes).toEqual([])
+  })
+
+  it('discard drops both drafts', () => {
+    const scope = new FakeScope({ cnAccelerateUrl: 'https://mirror.example/' })
+    const form = new AccelForm(scope)
+    form.actions().setAccelEnabled(true)
+    form.actions().editAccelUrl('https://other.example/')
+    expect(form.bind().getSnapshot().dirty).toBe(true)
+    form.actions().discardAccel()
+    expect(form.bind().getSnapshot()).toMatchObject({
+      enabled: false, urlText: 'https://mirror.example/', dirty: false,
+    })
+    expect(scope.writes).toEqual([])
+  })
+})
+
+describe('AccelForm save', () => {
+  it('commits the pair together, with the URL normalized', async () => {
+    const scope = new FakeScope({})
+    const form = new AccelForm(scope)
+    const store = form.bind()
+    form.actions().setAccelEnabled(true)
+    form.actions().editAccelUrl('https://mirror.example/prefix')
+    await form.actions().saveAccel()
+    expect(scope.writes).toEqual([
+      { op: 'set', field: 'cnAccelerate', value: true },
+      { op: 'set', field: 'cnAccelerateUrl', value: 'https://mirror.example/prefix/' },
+    ])
+    expect(store.getSnapshot()).toMatchObject({
+      enabled: true, urlText: 'https://mirror.example/prefix/', dirty: false, failed: false,
+    })
+  })
+
+  it('switch-only staging still writes both keys — never a half pair', async () => {
+    const scope = new FakeScope({})
+    const form = new AccelForm(scope)
+    form.actions().setAccelEnabled(true)
+    await form.actions().saveAccel()
+    expect(scope.writes).toEqual([
+      { op: 'set', field: 'cnAccelerate', value: true },
+      { op: 'set', field: 'cnAccelerateUrl', value: ACCEL_DEFAULT_URL },
+    ])
+  })
+
+  it('refuses to save an unusable or empty URL draft', async () => {
+    const scope = new FakeScope({})
+    const form = new AccelForm(scope)
+    form.actions().setAccelEnabled(true)
+    form.actions().editAccelUrl('gh-proxy.com')
+    await form.actions().saveAccel()
+    expect(scope.writes).toEqual([])
+    expect(form.bind().getSnapshot()).toMatchObject({ dirty: true, failed: false })
+    form.actions().editAccelUrl('')
+    await form.actions().saveAccel()
+    expect(scope.writes).toEqual([])
+  })
+
+  it('refuses to save with nothing staged', async () => {
+    const scope = new FakeScope({})
+    const form = new AccelForm(scope)
+    await form.actions().saveAccel()
+    expect(scope.writes).toEqual([])
+  })
+
+  it('flags a refused pair write and keeps the drafts staged', async () => {
+    const scope = new FakeScope({})
+    scope.applyWrites = false
+    const form = new AccelForm(scope)
+    const store = form.bind()
+    form.actions().setAccelEnabled(true)
+    form.actions().editAccelUrl('https://mirror.example/')
+    await form.actions().saveAccel()
+    expect(store.getSnapshot()).toMatchObject({
+      enabled: true, urlText: 'https://mirror.example/', dirty: true, failed: true,
+    })
+    form.actions().editAccelUrl('https://mirror.example/fixed')
+    expect(store.getSnapshot().failed).toBe(false)
   })
 })

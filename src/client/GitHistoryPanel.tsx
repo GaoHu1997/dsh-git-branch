@@ -24,17 +24,21 @@ import { fetchStatus, requestAiCommitMessage, requestChanges, requestCommit, req
 import { emitGitMutated, onGitMutated } from './git-events.ts'
 import { appendPage, buildBranchRows, groupChanges, type BranchRow, type ChangeRow } from './git-panel-data.ts'
 import type { GitPanelTranslator, PanelHostContext, SessionModelSelection, SidebarTabScope } from './panel-types.ts'
+import type { AccelFace } from './accel-form.ts'
 import { BranchSection } from './panel/BranchSection.tsx'
+import { CnAcceleratePopover } from './panel/CnAcceleratePopover.tsx'
 import { HistorySection, type CommitFilesState } from './panel/HistorySection.tsx'
 import { UncommittedSection } from './panel/UncommittedSection.tsx'
 import { timeLabel } from './relative-time.ts'
 import css from './GitHistoryPanel.module.css'
 
-/** Tab content props: what the registration's component call hands over. */
+/** Tab content props: what the registration's component call hands over.
+ * `accel` is the shared cn-accelerate form (topbar button + popover). */
 export type GitPanelTabProps = {
   ctx: PanelHostContext
   scope: SidebarTabScope
   t: GitPanelTranslator
+  accel: AccelFace
 }
 
 /** One git failure → its message text (the git stderr rides error.message). */
@@ -62,8 +66,10 @@ const GitHistoryPanelData = forwardRef<GitHistoryPanelDataHandle, {
   model: SessionModelSelection | undefined
   t: GitPanelTranslator
   pushToast: (text: string, tone: PanelToast['tone']) => void
+  /** Reads the cn-accelerate switch at toast time (stable reference). */
+  accelOn: () => boolean
 }>(function GitHistoryPanelData(props, ref): JSX.Element {
-  const { cwd, model, t, pushToast } = props
+  const { cwd, model, t, pushToast, accelOn } = props
   const [status, setStatus] = useState<RepoStatus | null>(null)
   const [statusError, setStatusError] = useState<string | undefined>()
   const [changes, setChanges] = useState<WorktreeChange[]>([])
@@ -261,12 +267,20 @@ const GitHistoryPanelData = forwardRef<GitHistoryPanelDataHandle, {
     })()
   }, [aiBusy, commitDraft, cwd, model, pushToast, t])
 
+  /** Fetch/update failure toast text: the git failure line, plus the
+   * mirror-unavailable hint while cn-accelerate is on (push is never
+   * accelerated, so its failures stay hint-free). */
+  const syncFailureText = useCallback((message: string): string => {
+    const generic = t('errorGeneric', { message })
+    return accelOn() ? `${generic} ${t('accel.mirrorDownHint')}` : generic
+  }, [accelOn, t])
+
   const onFetch = useCallback((): void => {
     setSyncBusy(true)
     void (async () => {
       try {
         const result = await requestFetch(cwd)
-        if (!result.ok) pushToast(t('errorGeneric', { message: result.error }), 'error')
+        if (!result.ok) pushToast(syncFailureText(result.error), 'error')
         else {
           pushToast(t('fetchDone'), 'success')
           emitGitMutated()
@@ -276,14 +290,14 @@ const GitHistoryPanelData = forwardRef<GitHistoryPanelDataHandle, {
         setSyncBusy(false)
       }
     })()
-  }, [cwd, loadAll, pushToast, t])
+  }, [cwd, loadAll, pushToast, syncFailureText, t])
 
   const onUpdate = useCallback((): void => {
     setSyncBusy(true)
     void (async () => {
       try {
         const result = await requestUpdate(cwd)
-        if (!result.ok) pushToast(t('errorGeneric', { message: result.error }), 'error')
+        if (!result.ok) pushToast(syncFailureText(result.error), 'error')
         else {
           pushToast(result.updated ? t('updateDone', { branch: result.branch }) : t('updateUpToDate'), 'success')
           emitGitMutated()
@@ -293,7 +307,7 @@ const GitHistoryPanelData = forwardRef<GitHistoryPanelDataHandle, {
         setSyncBusy(false)
       }
     })()
-  }, [cwd, loadAll, pushToast, t])
+  }, [cwd, loadAll, pushToast, syncFailureText, t])
 
   const onPush = useCallback((): void => {
     setSyncBusy(true)
@@ -476,7 +490,7 @@ const GitHistoryPanelData = forwardRef<GitHistoryPanelDataHandle, {
 /** The registered better-sidebar tab's content: chrome + data owner, keyed
  * by cwd so a session switch starts every section from scratch. */
 export function GitPanelTab(props: GitPanelTabProps): JSX.Element {
-  const { ctx, scope, t } = props
+  const { ctx, scope, t, accel } = props
   // Session-derived facts: cwd comes from the tab scope (the session list
   // summary as fallback); the model-selection projection (next, falling
   // back to lastUsed) feeds the AI generator. Both uSES snapshots return
@@ -500,12 +514,39 @@ export function GitPanelTab(props: GitPanelTabProps): JSX.Element {
     const seq = toastSeq.current
     setToasts(queue => [...queue, { seq, text, tone }])
   }, [])
+  // Cn-accelerate: the button reflects the stored switch; its popover edits
+  // the shared staged form. Closing the popover (toggle, Esc, outside click,
+  // 取消) discards the staged edits — the form is one-shot by save.
+  const accelState = useSyncExternalStore(accel.store.subscribe, accel.store.getSnapshot)
+  const [accelOpen, setAccelOpen] = useState(false)
+  const accelOn = useCallback(() => accel.store.getSnapshot().enabled, [accel])
+  const closeAccel = useCallback(() => {
+    accel.discardAccel()
+    setAccelOpen(false)
+  }, [accel])
 
   return (
     <div className={css.page}>
       <header className={css.topbar}>
         {cwd !== undefined ? <span className={css.repoPill}><span className={css.repoName}>{cwd}</span></span> : null}
         <div className={css.topbarActions}>
+          <div className={css.cnWrap}>
+            <button
+              type="button"
+              className={accelState.enabled ? css.cnBtnOn : css.cnBtn}
+              title={t('panel.cnAccelerate')}
+              aria-label={t('panel.cnAccelerate')}
+              aria-expanded={accelOpen}
+              onClick={() => (accelOpen ? closeAccel() : setAccelOpen(true))}
+            >
+              <span aria-hidden="true">⚡</span>
+              <span>{t('panel.cnAccelerate')}</span>
+              {accelState.enabled ? <span className={css.cnDot} aria-hidden="true" /> : null}
+            </button>
+            {accelOpen
+              ? <CnAcceleratePopover accel={accel} t={t} pushToast={pushToast} onClose={closeAccel} />
+              : null}
+          </div>
           <button
             type="button"
             className={css.refreshBtn}
@@ -520,7 +561,7 @@ export function GitPanelTab(props: GitPanelTabProps): JSX.Element {
       </header>
       {cwd === undefined
         ? <div className={css.empty}>{t('panel.noSession')}</div>
-        : <GitHistoryPanelData key={cwd} ref={dataRef} cwd={cwd} model={model} t={t} pushToast={pushToast} />}
+        : <GitHistoryPanelData key={cwd} ref={dataRef} cwd={cwd} model={model} t={t} pushToast={pushToast} accelOn={accelOn} />}
       {toasts.map(toast => (
         <Toast
           key={String(toast.seq)}

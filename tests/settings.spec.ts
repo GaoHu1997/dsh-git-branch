@@ -27,12 +27,14 @@ describe('config section shapes', () => {
       groupSidebar: true,
       fetchBeforeCreate: false,
       autoPruneWorktrees: false,
+      cnAccelerate: false,
       keepWorktrees: 30,
     })
     expect(sectionOf({ groupSidebar: false, fetchBeforeCreate: true, autoPruneWorktrees: true, keepWorktrees: 5 })).toEqual({
       groupSidebar: false,
       fetchBeforeCreate: true,
       autoPruneWorktrees: true,
+      cnAccelerate: false,
       keepWorktrees: 5,
     })
     expect(sectionOf({ rootDir: 'D:\\wt' })).toEqual({
@@ -40,6 +42,7 @@ describe('config section shapes', () => {
       groupSidebar: true,
       fetchBeforeCreate: false,
       autoPruneWorktrees: false,
+      cnAccelerate: false,
       keepWorktrees: 30,
     })
     expect(sectionOf({ postCreateCopyFiles: ['.env'] })).toEqual({
@@ -47,6 +50,16 @@ describe('config section shapes', () => {
       groupSidebar: true,
       fetchBeforeCreate: false,
       autoPruneWorktrees: false,
+      cnAccelerate: false,
+      keepWorktrees: 30,
+    })
+    // The URL stays ABSENT when unset (only the switch spells a default).
+    expect(sectionOf({ cnAccelerate: true, cnAccelerateUrl: 'https://mirror.example/' })).toEqual({
+      groupSidebar: true,
+      fetchBeforeCreate: false,
+      autoPruneWorktrees: false,
+      cnAccelerate: true,
+      cnAccelerateUrl: 'https://mirror.example/',
       keepWorktrees: 30,
     })
   })
@@ -60,6 +73,17 @@ describe('config section shapes', () => {
     expect(() => validateConfig({ postCreateCopyFiles: 'not-array' as unknown as string[] })).toThrow('"postCreateCopyFiles" must be an array of strings')
     expect(() => validateConfig({ postCreateCopyFiles: [123 as unknown as string] })).toThrow('"postCreateCopyFiles" must be an array of strings')
     expect(() => validateConfig({ groupSidebar: true, nope: 1 })).toThrow('unknown key "nope"')
+  })
+
+  it('requires the cn-accelerate pair to be a boolean and an http(s) URL', () => {
+    expect(() => validateConfig({ cnAccelerate: true, cnAccelerateUrl: 'https://gh-proxy.com/' })).not.toThrow()
+    expect(() => validateConfig({ cnAccelerate: false })).not.toThrow()
+    expect(() => validateConfig({ cnAccelerateUrl: 'https://mirror.example' })).not.toThrow()
+    expect(() => validateConfig({ cnAccelerate: 'yes' })).toThrow('"cnAccelerate" must be a boolean')
+    expect(() => validateConfig({ cnAccelerateUrl: 'gh-proxy.com' })).toThrow('"cnAccelerateUrl" must be an http(s) URL without whitespace')
+    expect(() => validateConfig({ cnAccelerateUrl: 'ftp://mirror.example/' })).toThrow('"cnAccelerateUrl" must be an http(s) URL without whitespace')
+    expect(() => validateConfig({ cnAccelerateUrl: 'https://mirror.example/a b' })).toThrow('"cnAccelerateUrl" must be an http(s) URL without whitespace')
+    expect(() => validateConfig({ cnAccelerateUrl: 5 as unknown as string })).toThrow('"cnAccelerateUrl" must be an http(s) URL without whitespace')
   })
 
   it('requires the prune cap to be an integer >= 1', () => {

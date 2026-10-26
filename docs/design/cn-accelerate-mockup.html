@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>国内加速 — Git 管理面板设计稿</title>
+<style>
+  /* ---------- 设计稿文档自身 ---------- */
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: #101116;
+    color: #e8eaed;
+    font: 14px/1.6 "PingFang SC", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
+    padding: 32px 24px 64px;
+  }
+  .doc-head { max-width: 720px; margin: 0 auto 8px; }
+  .doc-head h1 { font-size: 22px; margin: 0 0 4px; }
+  .doc-head p { color: #a8adb7; margin: 0; font-size: 13px; }
+  .frame { max-width: 720px; margin: 36px auto 0; }
+  .frame > h2 {
+    font-size: 15px; margin: 0 0 4px; color: #e8eaed;
+    display: flex; align-items: baseline; gap: 8px;
+  }
+  .frame > h2 .no {
+    font-size: 11px; color: #7c828c; border: 0.5px solid rgba(255,255,255,.14);
+    border-radius: 999px; padding: 0 8px;
+  }
+  .frame > .desc { color: #a8adb7; font-size: 12.5px; margin: 0 0 12px; }
+  .notes { color: #a8adb7; font-size: 12.5px; margin: 12px 0 0; padding-left: 18px; }
+  .notes li { margin: 3px 0; }
+  .notes code { color: #9db1ff; font-size: 12px; }
+  .stage {
+    background: #0c0d11; border: 0.5px solid rgba(255,255,255,.10);
+    border-radius: 12px; padding: 24px; display: flex; gap: 28px; flex-wrap: wrap;
+    align-items: flex-start;
+  }
+  .stage .column { display: flex; flex-direction: column; gap: 12px; min-width: 300px; }
+
+  /* ---------- dsh 设计 token（深色取值，与 GitHistoryPanel.module.css 同名） ---------- */
+  .dsw {
+    --dsw-alias-bg-layer-1: #17181d;
+    --dsw-alias-bg-layer-2: #1e2026;
+    --dsw-alias-bg-layer-3: #262932;
+    --dsw-alias-border-l2: rgba(255,255,255,.08);
+    --dsw-alias-border-l4: rgba(255,255,255,.14);
+    --dsw-alias-label-primary: #e8eaed;
+    --dsw-alias-label-secondary: #a8adb7;
+    --dsw-alias-label-tertiary: #7c828c;
+    --dsw-alias-interactive-bg-hover: rgba(255,255,255,.06);
+    --dsw-alias-brand-primary: #4c6bf5;
+    --dsw-alias-status-success: #218358;
+    --dsw-alias-label-warning: #b07000;
+    --dsw-alias-status-danger: #d5304f;
+    --dsw-shadow-lv3: 0 8px 28px rgba(0,0,0,.45);
+  }
+
+  /* ---------- 面板骨架 ---------- */
+  .panel {
+    width: 520px; background: var(--dsw-alias-bg-layer-1);
+    border: 0.5px solid var(--dsw-alias-border-l2); border-radius: 12px;
+    overflow: hidden; font-size: 13px;
+  }
+  .topbar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 12px; border-bottom: 0.5px solid var(--dsw-alias-border-l2);
+  }
+  .repoPill {
+    flex: 1; min-width: 0; display: inline-flex; align-items: center;
+    padding: 3px 12px; border-radius: 999px;
+    border: 0.5px solid var(--dsw-alias-border-l4);
+    color: var(--dsw-alias-label-secondary); font-size: 12px;
+  }
+  .repoName {
+    color: var(--dsw-alias-label-primary); white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis;
+  }
+  .topbarActions { display: flex; align-items: center; gap: 4px; }
+
+  /* 「国内加速」按钮：未启用 / 已启用 */
+  .cnBtn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 5px 10px; border-radius: 8px; border: 0; cursor: pointer;
+    background: none; color: var(--dsw-alias-label-secondary);
+    font-size: 12.5px; font-family: inherit;
+  }
+  .cnBtn:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+  .cnBtn .bolt { font-size: 13px; line-height: 1; }
+  .cnBtn.on {
+    background: rgba(76,107,245,.16); color: var(--dsw-alias-brand-primary);
+  }
+  .cnBtn .dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--dsw-alias-status-success); display: none;
+  }
+  .cnBtn.on .dot { display: inline-block; }
+
+  .iconBtn {
+    width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center;
+    border: 0; border-radius: 8px; background: none;
+    color: var(--dsw-alias-label-secondary); cursor: pointer; font-size: 14px;
+  }
+  .iconBtn:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+
+  /* 卡片骨架（未提交 / 分支 / 提交历史，仅示意） */
+  .card {
+    margin: 10px 12px 0; background: var(--dsw-alias-bg-layer-2);
+    border: 0.5px solid var(--dsw-alias-border-l2); border-radius: 10px;
+  }
+  .card:last-child { margin-bottom: 12px; }
+  .cardHead {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 12px; border-bottom: 0.5px solid var(--dsw-alias-border-l2);
+  }
+  .cardTitle { font-weight: 600; font-size: 12.5px; }
+  .searchBox {
+    display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px;
+    border: 0.5px solid var(--dsw-alias-border-l4); border-radius: 999px;
+    color: var(--dsw-alias-label-tertiary); font-size: 11.5px;
+  }
+  .row {
+    display: flex; align-items: center; gap: 8px; padding: 6px 12px;
+    color: var(--dsw-alias-label-primary); font-size: 12px;
+  }
+  .row .muted { color: var(--dsw-alias-label-tertiary); }
+  .row .badge { font-size: 10px; padding: 0 6px; border-radius: 4px; color: #fff; }
+  .badge.a { background: var(--dsw-alias-status-success); }
+  .badge.q { background: var(--dsw-alias-label-tertiary); }
+  .rail { width: 10px; display: flex; justify-content: center; color: var(--dsw-alias-label-tertiary); }
+  .dotBlue { width: 6px; height: 6px; border-radius: 50%; background: var(--dsw-alias-brand-primary); }
+  .dotPurple { width: 6px; height: 6px; border-radius: 50%; background: #8350d8; }
+
+  /* ---------- 配置浮层 ---------- */
+  .popover {
+    width: 320px; background: var(--dsw-alias-bg-layer-3);
+    border: 0.5px solid var(--dsw-alias-border-l4); border-radius: 10px;
+    box-shadow: var(--dsw-shadow-lv3); padding: 14px;
+  }
+  .popTitleRow { display: flex; align-items: center; justify-content: space-between; }
+  .popTitle { font-size: 13px; font-weight: 600; }
+  .switch {
+    width: 36px; height: 20px; border-radius: 999px; position: relative;
+    background: var(--dsw-alias-bg-layer-1); border: 0.5px solid var(--dsw-alias-border-l4);
+    cursor: pointer; flex: none;
+  }
+  .switch::after {
+    content: ""; position: absolute; top: 2px; left: 2px;
+    width: 14px; height: 14px; border-radius: 50%; background: #fff;
+  }
+  .switch.on { background: var(--dsw-alias-brand-primary); border-color: transparent; }
+  .switch.on::after { left: 18px; }
+  .popHint {
+    margin: 8px 0 12px; font-size: 11px; line-height: 1.7;
+    color: var(--dsw-alias-label-tertiary);
+  }
+  .fieldLabel { font-size: 11.5px; color: var(--dsw-alias-label-secondary); margin-bottom: 6px; }
+  .fieldRow { display: flex; gap: 6px; }
+  .input {
+    flex: 1; min-width: 0; padding: 6px 10px; font-size: 12px; font-family: inherit;
+    background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary);
+    border: 0.5px solid var(--dsw-alias-border-l4); border-radius: 7px;
+  }
+  .input:focus { outline: none; border-color: var(--dsw-alias-brand-primary); }
+  .input.invalid { border-color: var(--dsw-alias-status-danger); }
+  .ghostBtn {
+    padding: 6px 10px; font-size: 11.5px; font-family: inherit; cursor: pointer;
+    background: none; border: 0.5px solid var(--dsw-alias-border-l4);
+    border-radius: 7px; color: var(--dsw-alias-label-secondary); white-space: nowrap;
+  }
+  .ghostBtn:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+  .errorMsg { margin: 6px 0 0; font-size: 11px; color: var(--dsw-alias-status-danger); }
+  .popFooter { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+  .btnPrimary {
+    padding: 6px 16px; font-size: 12px; font-family: inherit; cursor: pointer;
+    background: #4c6bf5; border: 0; border-radius: 7px; color: #fff;
+  }
+  .btnGhost {
+    padding: 6px 14px; font-size: 12px; font-family: inherit; cursor: pointer;
+    background: none; border: 0; border-radius: 7px; color: var(--dsw-alias-label-secondary);
+  }
+  .btnGhost:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+
+  /* 锚定示意 */
+  .anchored { position: relative; }
+  .anchorArrow {
+    position: absolute; right: 44px; top: -5px; width: 10px; height: 10px;
+    background: var(--dsw-alias-bg-layer-3); border-left: 0.5px solid var(--dsw-alias-border-l4);
+    border-top: 0.5px solid var(--dsw-alias-border-l4); transform: rotate(45deg);
+  }
+  .tag {
+    display: inline-block; font-size: 10.5px; padding: 1px 8px; border-radius: 999px;
+    border: 0.5px solid var(--dsw-alias-border-l4); color: var(--dsw-alias-label-secondary);
+    margin-left: 8px; vertical-align: 2px;
+  }
+  .tag.green { color: var(--dsw-alias-status-success); }
+  .tag.red { color: var(--dsw-alias-status-danger); }
+
+  /* toast */
+  .toast {
+    display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px;
+    background: var(--dsw-alias-bg-layer-3); border: 0.5px solid var(--dsw-alias-border-l4);
+    border-radius: 8px; box-shadow: var(--dsw-shadow-lv3); font-size: 12px;
+    color: var(--dsw-alias-label-primary);
+  }
+
+  /* 设置卡片行 */
+  .settingCard {
+    width: 520px; background: var(--dsw-alias-bg-layer-2);
+    border: 0.5px solid var(--dsw-alias-border-l2); border-radius: 10px; padding: 14px;
+  }
+  .settingRow { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+  .settingName { font-size: 13px; font-weight: 600; }
+  .settingHint { font-size: 11px; color: var(--dsw-alias-label-tertiary); margin-top: 4px; line-height: 1.7; }
+
+  /* 重写效果 */
+  .rewrite {
+    width: 520px; background: var(--dsw-alias-bg-layer-2);
+    border: 0.5px solid var(--dsw-alias-border-l2); border-radius: 10px; padding: 14px;
+    font-family: Consolas, "Courier New", monospace; font-size: 11.5px;
+  }
+  .rewrite .url { color: var(--dsw-alias-label-primary); word-break: break-all; }
+  .rewrite .arrow { color: var(--dsw-alias-label-tertiary); margin: 6px 0; }
+  .rewrite .prefix { color: var(--dsw-alias-brand-primary); }
+  .rewrite .off { color: var(--dsw-alias-label-tertiary); }
+</style>
+</head>
+<body>
+
+<div class="doc-head">
+  <h1>Git 管理面板 ·「国内加速」按钮设计稿</h1>
+  <p>dsh-git-branch-manage · 配套设计文档见 cn-accelerate.md · 视觉沿用 dsw token（--dsw-alias-*），深浅主题自动跟随</p>
+</div>
+
+<!-- ① -->
+<section class="frame">
+  <h2><span class="no">①</span> 顶栏 · 未启用态（默认）<span class="tag">默认外观</span></h2>
+  <p class="desc">按钮位于顶栏操作区、「刷新」左侧；与刷新同为幽灵按钮样式。面板下方三段卡片仅示意上下文。</p>
+  <div class="stage">
+    <div class="dsw column">
+      <div class="panel">
+        <div class="topbar">
+          <span class="repoPill"><span class="repoName">D:\work\dsh-git-branch</span></span>
+          <div class="topbarActions">
+            <button class="cnBtn"><span class="bolt">⚡</span>国内加速<span class="dot"></span></button>
+            <button class="iconBtn" title="刷新">⟳</button>
+          </div>
+        </div>
+        <div class="card">
+          <div class="cardHead"><span class="cardTitle">未提交变更</span></div>
+          <div class="row"><span class="badge a">M</span>src/git.ts</div>
+          <div class="row"><span class="badge q">?</span>docs/design/cn-accelerate.md</div>
+        </div>
+        <div class="card">
+          <div class="cardHead">
+            <span class="cardTitle">分支</span>
+            <span class="searchBox">⌕ 搜索分支</span>
+          </div>
+          <div class="row"><span class="rail">✓</span>main <span class="muted">↓0 ↑2</span></div>
+          <div class="row"><span class="rail">⎇</span>feat/cn-accelerate</div>
+        </div>
+        <div class="card">
+          <div class="cardHead"><span class="cardTitle">提交历史</span></div>
+          <div class="row"><span class="rail"><span class="dotBlue"></span></span>feat: 分支搜索框</div>
+          <div class="row"><span class="rail"><span class="dotPurple"></span></span>fix: 面板状态同步</div>
+        </div>
+      </div>
+    </div>
+    <div class="column">
+      <div class="dsw toast">ℹ 「国内加速」为全局配置，与仓库无关，无会话时也可点</div>
+    </div>
+  </div>
+  <ul class="notes">
+    <li>按钮文案「国内加速」+ ⚡ 图标；未启用时不高亮，不显示绿点。</li>
+    <li>点击弹出配置浮层（见 ③），按钮本身不做任何 git 操作。</li>
+  </ul>
+</section>
+
+<!-- ② -->
+<section class="frame">
+  <h2><span class="no">②</span> 顶栏 · 已启用态<span class="tag green">加速生效中</span></h2>
+  <p class="desc">启用后按钮品牌色弱底 + 绿点；此时提取/更新类操作自动走加速地址。</p>
+  <div class="stage">
+    <div class="dsw column">
+      <div class="panel">
+        <div class="topbar">
+          <span class="repoPill"><span class="repoName">D:\work\dsh-git-branch</span></span>
+          <div class="topbarActions">
+            <button class="cnBtn on"><span class="bolt">⚡</span>国内加速<span class="dot"></span></button>
+            <button class="iconBtn" title="刷新">⟳</button>
+          </div>
+        </div>
+        <div class="card">
+          <div class="cardHead"><span class="cardTitle">分支</span><span class="searchBox">⌕ 搜索分支</span></div>
+          <div class="row"><span class="rail">✓</span>main <span class="muted">↓0 ↑2</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="column">
+      <div class="dsw toast">✓ 已启用国内加速：https://gh-proxy.com/</div>
+      <div class="dsw toast">✓ 已关闭国内加速</div>
+    </div>
+  </div>
+  <ul class="notes">
+    <li>启用 / 关闭保存成功后 toast 反馈（右列两种文案）。</li>
+    <li>绿点 <code>--dsw-alias-status-success</code>，弱底 <code>rgba(76,107,245,.16)</code>，文字品牌色。</li>
+  </ul>
+</section>
+
+<!-- ③ -->
+<section class="frame">
+  <h2><span class="no">③</span> 配置浮层 · 默认<span class="tag">开关关</span></h2>
+  <p class="desc">锚定按钮下方、右对齐；Esc / 点击外部关闭并丢弃未保存修改。</p>
+  <div class="stage">
+    <div class="dsw column">
+      <div class="anchored">
+        <div class="anchorArrow"></div>
+        <div class="popover">
+          <div class="popTitleRow">
+            <span class="popTitle">国内加速</span>
+            <div class="switch"></div>
+          </div>
+          <p class="popHint">仅加速 https 的 github.com 仓库地址，作用于提取 / 更新；推送不走加速。第三方加速站可看到仓库内容，请勿用于私有 / 敏感仓库。</p>
+          <div class="fieldLabel">加速地址</div>
+          <div class="fieldRow">
+            <input class="input" value="https://gh-proxy.com/" readonly>
+            <button class="ghostBtn">恢复默认</button>
+          </div>
+          <div class="popFooter">
+            <button class="btnGhost">取消</button>
+            <button class="btnPrimary">保存</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="column">
+      <div class="dsw toast">ℹ 「恢复默认」只回填输入框，仍需点「保存」生效</div>
+      <div class="dsw toast">ℹ 开关与地址统一随「保存」一次生效</div>
+    </div>
+  </div>
+  <ul class="notes">
+    <li>加速地址默认值 <code>https://gh-proxy.com/</code>，可整体替换为其他加速前缀。</li>
+    <li>开关初始为关闭——默认行为与现状完全一致，不改变存量用户。</li>
+  </ul>
+</section>
+
+<!-- ④ -->
+<section class="frame">
+  <h2><span class="no">④</span> 配置浮层 · 启用 + 自定义地址<span class="tag green">已编辑</span></h2>
+  <p class="desc">开关打开 + 地址被修改；点「保存」后配置持久化（与设置卡片同一配置键）。</p>
+  <div class="stage">
+    <div class="dsw column">
+      <div class="popover">
+        <div class="popTitleRow">
+          <span class="popTitle">国内加速</span>
+          <div class="switch on"></div>
+        </div>
+        <p class="popHint">仅加速 https 的 github.com 仓库地址，作用于提取 / 更新；推送不走加速。第三方加速站可看到仓库内容，请勿用于私有 / 敏感仓库。</p>
+        <div class="fieldLabel">加速地址</div>
+        <div class="fieldRow">
+          <input class="input" value="https://mirror.example.com/gh/" readonly>
+          <button class="ghostBtn">恢复默认</button>
+        </div>
+        <div class="popFooter">
+          <button class="btnGhost">取消</button>
+          <button class="btnPrimary">保存</button>
+        </div>
+      </div>
+    </div>
+    <div class="dsw column">
+      <div class="toast" style="align-items:flex-start;flex-direction:column;gap:4px;">
+        <span>地址校验规则（保存时）</span>
+        <span style="color:#a8adb7;font-size:11.5px;line-height:1.8">
+          · trim 前后空白<br>
+          · 必须以 http:// 或 https:// 开头，且无空白字符<br>
+          · 结尾缺 / 自动补上（前缀必须以 / 收尾）<br>
+          · 空串 / 非法 → 红框 + 错误行，不保存
+        </span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ⑤ -->
+<section class="frame">
+  <h2><span class="no">⑤</span> 校验错误态<span class="tag red">不可保存</span></h2>
+  <p class="desc">非法地址不保存，「保存」不做静默修正（尾部补 / 这类规范化除外）。</p>
+  <div class="stage">
+    <div class="dsw column">
+      <div class="popover">
+        <div class="popTitleRow">
+          <span class="popTitle">国内加速</span>
+          <div class="switch on"></div>
+        </div>
+        <p class="popHint">仅加速 https 的 github.com 仓库地址，作用于提取 / 更新；推送不走加速。第三方加速站可看到仓库内容，请勿用于私有 / 敏感仓库。</p>
+        <div class="fieldLabel">加速地址</div>
+        <div class="fieldRow">
+          <input class="input invalid" value="gh-proxy.com" readonly>
+          <button class="ghostBtn">恢复默认</button>
+        </div>
+        <p class="errorMsg">⚠ 请输入以 http(s):// 开头的地址</p>
+        <div class="popFooter">
+          <button class="btnGhost">取消</button>
+          <button class="btnPrimary">保存</button>
+        </div>
+      </div>
+    </div>
+    <div class="dsw column">
+      <div class="toast" style="align-items:flex-start;flex-direction:column;gap:4px;">
+        <span>错误文案</span>
+        <span style="color:#a8adb7;font-size:11.5px;line-height:1.8">
+          · 非 http(s):// 开头 →「请输入以 http(s):// 开头的地址」<br>
+          · 空串 →「请输入加速地址」<br>
+          · 错误行仅在校验失败时渲染
+        </span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ⑥ -->
+<section class="frame">
+  <h2><span class="no">⑥</span> 设置卡片同步行<span class="tag">同一配置</span></h2>
+  <p class="desc">设置卡片新增「国内加速」一行（开关 + 地址 + 说明），与浮层共用配置键，互相可见。</p>
+  <div class="stage">
+    <div class="dsw column">
+      <div class="settingCard">
+        <div class="settingRow">
+          <div>
+            <div class="settingName">国内加速</div>
+            <div class="settingHint">
+              通过加速前缀重写 GitHub 地址，加速提取 / 更新；推送不走加速。<br>
+              仅作用于 https 的 github.com 地址；第三方加速站可看到仓库内容，请勿用于私有 / 敏感仓库。
+            </div>
+          </div>
+          <div class="switch on"></div>
+        </div>
+        <div class="fieldRow" style="margin-top:10px">
+          <input class="input" value="https://gh-proxy.com/" readonly>
+          <button class="ghostBtn">恢复默认</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ⑦ -->
+<section class="frame">
+  <h2><span class="no">⑦</span> URL 重写效果（实现说明）</h2>
+  <p class="desc">启用后读类命令注入 <code style="color:#9db1ff">-c url.&lt;前缀&gt;.insteadOf=https://github.com/</code>，不改用户全局 git 配置。</p>
+  <div class="stage">
+    <div class="dsw column">
+      <div class="rewrite">
+        <div class="off">// 禁用（现状）</div>
+        <div class="url">https://github.com/GaoHu1997/dsh-git-branch.git</div>
+        <div class="arrow">▼ 启用后重写为</div>
+        <div class="url"><span class="prefix">https://gh-proxy.com/</span>https://github.com/GaoHu1997/dsh-git-branch.git</div>
+      </div>
+    </div>
+    <div class="dsw column">
+      <div class="toast" style="align-items:flex-start;flex-direction:column;gap:4px;">
+        <span>作用范围</span>
+        <span style="color:#a8adb7;font-size:11.5px;line-height:1.8">
+          · fetch / 更新 / 建 worktree 前的 fetch → 走加速 ✓<br>
+          · push → 保持直连（公共镜像不支持 receive-pack）<br>
+          · SSH remote（git@github.com:）→ 不重写
+        </span>
+      </div>
+    </div>
+  </div>
+  <ul class="notes">
+    <li>加速站不可用时 fetch 报错 toast 尾部追加「若加速地址不可用，可停用国内加速或更换地址」。</li>
+  </ul>
+</section>
+
+</body>
+</html>

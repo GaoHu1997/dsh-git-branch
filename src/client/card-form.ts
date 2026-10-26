@@ -10,6 +10,10 @@
  * document mutation, so the control stages what the user types and commits
  * it only on save.
  *
+ * The cn-accelate fields ride the same {@link SectionValue} scope but are
+ * staged by {@link ./accel-form} — one shared form instance for the popover
+ * and the card row — so saving one unit never commits the other's drafts.
+ *
  * Self-contained on purpose: the client bundle-purity rule forbids value
  * imports across plugins, so this package stages and fences its own form
  * (and its own snapshot store) rather than importing another plugin's model.
@@ -36,6 +40,10 @@ export interface SectionValue {
   keepWorktrees?: number
   /** Post-create configuration files to copy when .worktreeinclude is absent. */
   postCreateCopyFiles?: string[]
+  /** cn-accelerate mirror rewrite for network reads; absent = off. */
+  cnAccelerate?: boolean
+  /** cn-accelerate mirror prefix; absent = the shipped default. */
+  cnAccelerateUrl?: string
 }
 
 /**

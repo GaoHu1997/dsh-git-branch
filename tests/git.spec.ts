@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { join, normalize, resolve } from 'node:path'
 import {
-  addWorktree, addWorktreeCutout, appendWorktreeExclude, createBranch, cutoutBranchName, deleteBranch, fetchAll, inspectWorktree, NETWORK_TIMEOUT_MS, probeRepo, probeWorkspaceGit, pushBranch, removeWorktree, renameBranch, switchBranch, updateBranch, WORKTREE_EXCLUDE_RULE,
+  accelArgs, addWorktree, addWorktreeCutout, appendWorktreeExclude, createBranch, cutoutBranchName, deleteBranch, fetchAll, inspectWorktree, NETWORK_TIMEOUT_MS, probeRepo, probeWorkspaceGit, pushBranch, removeWorktree, renameBranch, switchBranch, updateBranch, WORKTREE_EXCLUDE_RULE,
   type ExcludeSeams, type Exec, type ExecResult,
 } from '../src/git.ts'
 
@@ -360,12 +360,53 @@ describe('deleteBranch', () => {
   })
 })
 
+describe('accelArgs', () => {
+  const REWRITE = '-c'
+  const REWRITE_VALUE = 'url.https://gh-proxy.com/.insteadOf=https://github.com/'
+
+  it('emits the per-command rewrite with a normalized prefix', () => {
+    expect(accelArgs('https://gh-proxy.com/')).toEqual([REWRITE, REWRITE_VALUE])
+    // The prefix arrives un-normalized and gains the trailing slash.
+    expect(accelArgs('https://gh-proxy.com')).toEqual([REWRITE, REWRITE_VALUE])
+    expect(accelArgs('  https://mirror.example/prefix  ')).toEqual([REWRITE, 'url.https://mirror.example/prefix/.insteadOf=https://github.com/'])
+  })
+
+  it('stays empty without a prefix (the switch is off)', () => {
+    expect(accelArgs(undefined)).toEqual([])
+  })
+
+  it('fails safe to no rewrite when the prefix is not a usable URL', () => {
+    expect(accelArgs('gh-proxy.com')).toEqual([])
+    expect(accelArgs('ftp://mirror.example/')).toEqual([])
+    expect(accelArgs('https://mirror.example/a b')).toEqual([])
+    expect(accelArgs('')).toEqual([])
+  })
+})
+
 describe('fetchAll', () => {
   it('fetches every remote with prune at the repository root', async () => {
     const exec = scripted([
       { args: ['fetch', '--all', '--prune'], out: { stdout: 'Fetching origin\n' } },
     ])
     await expect(fetchAll(exec, '/repo')).resolves.toBeUndefined()
+  })
+
+  it('puts the mirror rewrite in front of the fetch when the prefix is set', async () => {
+    const exec = scripted([
+      { args: ['-c', 'url.https://gh-proxy.com/.insteadOf=https://github.com/', 'fetch', '--all', '--prune'], out: {} },
+    ])
+    await expect(fetchAll(exec, '/repo', 'https://gh-proxy.com')).resolves.toBeUndefined()
+  })
+
+  it('stays a bare fetch without a prefix or with an unusable one', async () => {
+    const bare = scripted([
+      { args: ['fetch', '--all', '--prune'], out: {} },
+    ])
+    await expect(fetchAll(bare, '/repo', undefined)).resolves.toBeUndefined()
+    const unusable = scripted([
+      { args: ['fetch', '--all', '--prune'], out: {} },
+    ])
+    await expect(fetchAll(unusable, '/repo', 'gh-proxy.com')).resolves.toBeUndefined()
   })
 
   it('surfaces a network refusal', async () => {
@@ -398,6 +439,17 @@ describe('updateBranch', () => {
       { args: ['branch', '--show-current'], out: { stdout: 'main\n' } },
     ])
     expect(await updateBranch(exec, '/repo')).toEqual({ branch: 'main', updated: false })
+  })
+
+  it('carries the mirror rewrite into the fetch phase only, never the merge', async () => {
+    const exec = scripted([
+      { args: ['-c', 'url.https://gh-proxy.com/.insteadOf=https://github.com/', 'fetch', '--all', '--prune'] },
+      { args: ['rev-parse', 'HEAD'], out: { stdout: 'aaa111\n' } },
+      { args: ['merge', '--ff-only', '@{u}'], out: { stdout: 'Already up to date.\n' } },
+      { args: ['rev-parse', 'HEAD'], out: { stdout: 'aaa111\n' } },
+      { args: ['branch', '--show-current'], out: { stdout: 'main\n' } },
+    ])
+    expect(await updateBranch(exec, '/repo', 'https://gh-proxy.com/')).toEqual({ branch: 'main', updated: false })
   })
 
   it('surfaces a fast-forward refusal on a diverged branch', async () => {
@@ -442,6 +494,22 @@ describe('pushBranch', () => {
     expect(pushCall).toBe(NETWORK_TIMEOUT_MS)
     // The @{u} probe stays on the local default.
     expect(seen[0]).toBeUndefined()
+  })
+
+  it('never injects the mirror rewrite: pushes stay direct, even accelerated', async () => {
+    // Public accelerators have no receive-pack, and rewriting the push would
+    // hand the pushed content to a third party. The injection point does not
+    // exist on this path — assert the argv is bare.
+    const argvs: string[][] = []
+    const exec: Exec = async (_file, args) => {
+      argvs.push([...args])
+      return { code: 0, stdout: 'abc\n', stderr: '' }
+    }
+    await pushBranch(exec, '/repo')
+    for (const args of argvs) {
+      expect(args).not.toContain('-c')
+    }
+    expect(argvs[1]).toEqual(['push'])
   })
 })
 
