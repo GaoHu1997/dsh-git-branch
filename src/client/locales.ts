@@ -197,6 +197,9 @@ export type GitWorktreeKey =
   | 'panel.tagName'
   | 'panel.tagMessage'
   | 'panel.tagDone'
+  | 'panel.tagPush'
+  | 'panel.tagPushDone'
+  | 'panel.tagPushUpToDate'
   | 'panel.noCommits'
   | 'panel.noMatches'
   | 'panel.loadMore'
@@ -415,6 +418,9 @@ export const en: Record<GitWorktreeKey, string> = {
   'panel.tagName': 'Tag name',
   'panel.tagMessage': 'Message (optional)',
   'panel.tagDone': 'Tagged {tag}',
+  'panel.tagPush': 'Push tag {tag}',
+  'panel.tagPushDone': 'Pushed tag {tag} to {remote}',
+  'panel.tagPushUpToDate': 'Tag {tag} is already on {remote}',
   'panel.noCommits': 'This repository has no commits yet',
   'panel.noMatches': 'No matching commits',
   'panel.loadMore': 'Load more',
@@ -634,6 +640,9 @@ export const zh: Record<GitWorktreeKey, string> = {
   'panel.tagName': '标签名称',
   'panel.tagMessage': '消息（可选）',
   'panel.tagDone': '已标记 {tag}',
+  'panel.tagPush': '推送标签 {tag}',
+  'panel.tagPushDone': '已推送标签 {tag} 到 {remote}',
+  'panel.tagPushUpToDate': '标签 {tag} 已存在于 {remote}',
   'panel.noCommits': '仓库还没有提交',
   'panel.noMatches': '没有匹配的提交',
   'panel.loadMore': '加载更多',

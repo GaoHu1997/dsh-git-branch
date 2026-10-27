@@ -6,12 +6,12 @@
 import { basename, dirname, join, resolve } from 'node:path'
 import { mkdir, readdir, rm, stat } from 'node:fs/promises'
 import { runPostCreateCopy, type CopyFilesSeams } from './copy-files.js'
-import { appendWorktreeExclude, fsExcludeSeams, GitError, addWorktree, addWorktreeCutout, collectAiDiff, commitFiles, commitIndex, createBranch, createTag, cutoutBranchName, deleteBranch, fetchAll, fsDirExists, inspectWorktree, isAbsoluteDir, isStageablePath, logHistory, probeRepo, probeWorkspaceGit, removeWorktree, renameBranch, resolveBranch, pushBranch, stagePaths, switchBranch, updateBranch, workingChanges, type DirExists, type ExcludeSeams, type Exec } from './git.js'
+import { appendWorktreeExclude, fsExcludeSeams, GitError, addWorktree, addWorktreeCutout, collectAiDiff, commitFiles, commitIndex, createBranch, createTag, cutoutBranchName, deleteBranch, fetchAll, fsDirExists, inspectWorktree, isAbsoluteDir, isStageablePath, listTagNames, logHistory, probeRepo, probeWorkspaceGit, pushTag, removeWorktree, renameBranch, resolveBranch, resolvePushRemote, pushBranch, stagePaths, switchBranch, updateBranch, workingChanges, type DirExists, type ExcludeSeams, type Exec } from './git.js'
 import { ACCEL_DEFAULT_URL, accelerateUrlError, isAbsoluteConfigPath, normalizeAccelerateUrl, sanitizeBranchDir } from './normalize.js'
 import { resolveRootDir } from './settings.js'
 import { COMMIT_MESSAGE_LIMIT } from './wire.js'
 import type {
-  AiCommitMessageBody, AiCommitMessageResult, ChangesBody, ChangesResult, CommitBody, CommitFilesBody, CommitFilesResult, CommitResult, CreateBranchBody, CreateBranchResult, CreateTagBody, CreateTagResult, CreateWorktreeBody, CreateWorktreeResult, DeleteBranchBody, DeleteBranchResult, EnsureDirectoryBody, EnsureDirectoryResult, FetchBody, FetchResult, GroupWorkspacesResult, InspectWorktreeBody, InspectWorktreeResult, LogBody, LogResult, PathExistsResult, PurgeDirectoryBody, PurgeDirectoryResult, RemoveWorktreeBody, RemoveWorktreeResult, RenameBranchBody, RenameBranchResult, RepoStatus, RouteError, StageBody, StageResult, SwitchBody, SwitchResult, UpdateBody, UpdateResult, PushBody, PushResult, WorktreesAllResult,
+  AiCommitMessageBody, AiCommitMessageResult, ChangesBody, ChangesResult, CommitBody, CommitFilesBody, CommitFilesResult, CommitResult, CreateBranchBody, CreateBranchResult, CreateTagBody, CreateTagResult, CreateWorktreeBody, CreateWorktreeResult, DeleteBranchBody, DeleteBranchResult, EnsureDirectoryBody, EnsureDirectoryResult, FetchBody, FetchResult, GroupWorkspacesResult, InspectWorktreeBody, InspectWorktreeResult, LogBody, LogResult, PathExistsResult, PurgeDirectoryBody, PurgeDirectoryResult, PushTagBody, PushTagResult, RemoveWorktreeBody, RemoveWorktreeResult, RenameBranchBody, RenameBranchResult, RepoStatus, RouteError, StageBody, StageResult, SwitchBody, SwitchResult, UpdateBody, UpdateResult, PushBody, PushResult, WorktreesAllResult,
 } from './wire.js'
 
 /** Everything the handlers need from the host half. */
@@ -79,7 +79,7 @@ export async function fsMkdirRecursive(path: string): Promise<void> {
 /** One route outcome: HTTP status plus the JSON body. */
 export interface RouteOutcome {
   status: number
-  body: RepoStatus | CreateWorktreeResult | SwitchResult | CreateBranchResult | FetchResult | UpdateResult | GroupWorkspacesResult | InspectWorktreeResult | RemoveWorktreeResult | PathExistsResult | EnsureDirectoryResult | WorktreesAllResult | PurgeDirectoryResult | ChangesResult | StageResult | CommitResult | LogResult | CommitFilesResult | CreateTagResult | AiCommitMessageResult | RouteError
+  body: RepoStatus | CreateWorktreeResult | SwitchResult | CreateBranchResult | FetchResult | UpdateResult | GroupWorkspacesResult | InspectWorktreeResult | RemoveWorktreeResult | PathExistsResult | EnsureDirectoryResult | WorktreesAllResult | PurgeDirectoryResult | ChangesResult | StageResult | CommitResult | LogResult | CommitFilesResult | CreateTagResult | PushTagResult | AiCommitMessageResult | RouteError
 }
 
 /** Uniform failure envelope. */
@@ -988,6 +988,8 @@ export const LOG_LIMIT_MAX = 200
 /** Bound for the author filter and the tag annotation (characters). */
 const LOG_AUTHOR_LIMIT = 200
 const TAG_MESSAGE_LIMIT = 5000
+/** Bound for one tag NAME (characters), shared by create and push. */
+const TAG_NAME_LIMIT = 300
 
 /**
  * POST /log — one page of the queried checkout's history. The optional `ref`
@@ -1060,7 +1062,7 @@ export async function handleCreateTag(deps: RouteDeps, body: unknown): Promise<R
   if (name.trim() === '') return fail(400, '"name" must be non-empty')
   // A leading dash would ride `git tag` as a flag — reject before the exec.
   if (name.startsWith('-')) return fail(400, '"name" must not start with "-"')
-  if (name.length > 300) return fail(400, '"name" must be at most 300 characters')
+  if (name.length > TAG_NAME_LIMIT) return fail(400, `"name" must be at most ${String(TAG_NAME_LIMIT)} characters`)
   // The target lands on `git tag <name> <target>` verbatim: restrict it to the
   // object id shape the history card sends rather than trusting a free string.
   if (target !== undefined && !/^[0-9a-fA-F]{4,64}$/.test(target)) {
@@ -1076,6 +1078,48 @@ export async function handleCreateTag(deps: RouteDeps, body: unknown): Promise<R
     // command runs at the repository root — the same scope as a branch rename.
     const result = await createTag(deps.exec, facts.repoRoot, name, target, message)
     const body: CreateTagResult = result
+    return { status: 200, body }
+  } catch (error) {
+    if (error instanceof GitError) return gitFailure(error)
+    return fail(500, error instanceof Error ? error.message : String(error))
+  }
+}
+
+/**
+ * POST /tag-push — publish ONE existing local tag to a remote. Separate from
+ * `POST /push` on purpose: a branch push sends the branch alone, so a tag on
+ * an already-pushed commit needs its own verb.
+ *
+ * The name must match a LOCAL tag this repository actually has (checked
+ * against `for-each-ref refs/tags`), so no free string ever reaches git as a
+ * flag or a refspec; the remote is resolved server-side and an ambiguous
+ * choice is 400. A remote that already carries the same tag object answers
+ * `pushed: false` (nothing was sent); a diverged remote tag is git's own
+ * refusal, mapped to 400 by {@link gitFailure} — never forced.
+ * @param deps - host dependencies.
+ * @param body - parsed request body: `{ repoPath, name }`.
+ */
+export async function handlePushTag(deps: RouteDeps, body: unknown): Promise<RouteOutcome> {
+  const parsed = readBody<PushTagBody>(body, ['repoPath', 'name'])
+  if (isOutcome(parsed)) return parsed
+  const { repoPath, name } = parsed
+  if (!isAbsoluteDir(repoPath)) return fail(400, '"repoPath" must be an absolute directory')
+  if (name.trim() === '') return fail(400, '"name" must be non-empty')
+  // A leading dash would ride `git push` as a flag — reject before the exec.
+  if (name.startsWith('-')) return fail(400, '"name" must not start with "-"')
+  if (name.length > TAG_NAME_LIMIT) return fail(400, `"name" must be at most ${String(TAG_NAME_LIMIT)} characters`)
+  try {
+    const facts = await probeRepo(deps.exec, repoPath, deps.dirExists)
+    if (facts === undefined) return fail(400, `"${repoPath}" is not inside a git repository`)
+    // The push runs at the queried directory's own toplevel, so the remote is
+    // the one ITS checked-out branch tracks (a linked worktree publishes the
+    // remote its own branch knows); tags themselves are repository-wide.
+    const tags = await listTagNames(deps.exec, facts.toplevel)
+    if (!tags.includes(name)) return fail(400, `"${name}" is not a local tag`)
+    const choice = await resolvePushRemote(deps.exec, facts.toplevel)
+    if (!choice.ok) return fail(400, choice.message)
+    const result = await pushTag(deps.exec, facts.toplevel, name, choice.remote)
+    const body: PushTagResult = result
     return { status: 200, body }
   } catch (error) {
     if (error instanceof GitError) return gitFailure(error)

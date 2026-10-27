@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { branchGroupKeys, filterBranches, filterCommits, groupChanges, groupRemotes } from '../src/client/git-panel-data.ts'
+import { branchGroupKeys, commitTags, filterBranches, filterCommits, groupChanges, groupRemotes } from '../src/client/git-panel-data.ts'
 import type { CommitEntry, WorktreeChange } from '../src/wire.ts'
 
 describe('groupChanges', () => {
@@ -113,5 +113,17 @@ describe('branchGroupKeys', () => {
 
   it('degrades to the two root groups without remotes', () => {
     expect(branchGroupKeys([])).toEqual(['local', 'remote'])
+  })
+})
+
+describe('commitTags', () => {
+  it('lists only the tag decorations, in decoration order', () => {
+    expect(commitTags(['HEAD -> main', 'tag: v1.0.6', 'origin/main', 'tag: v1.1.0']))
+      .toEqual(['v1.0.6', 'v1.1.0'])
+  })
+
+  it('answers empty for a commit with no tag (the menu then offers no push)', () => {
+    expect(commitTags(['HEAD', 'origin/main', 'main'])).toEqual([])
+    expect(commitTags([])).toEqual([])
   })
 })

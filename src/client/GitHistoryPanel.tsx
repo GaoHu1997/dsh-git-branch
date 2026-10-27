@@ -20,7 +20,7 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState, useSyncExternalStore } from 'react'
 import { IconRefreshOutlineRegular, Toast } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { CommitEntry, CommitFileEntry, RepoStatus, WorktreeChange } from '../wire.ts'
-import { fetchStatus, requestAiCommitMessage, requestChanges, requestCommit, requestCommitFiles, requestCreateBranch, requestCreateTag, requestDeleteBranch, requestFetch, requestLog, requestPush, requestRenameBranch, requestStage, requestSwitch, requestUpdate } from './api.ts'
+import { fetchStatus, requestAiCommitMessage, requestChanges, requestCommit, requestCommitFiles, requestCreateBranch, requestCreateTag, requestDeleteBranch, requestFetch, requestLog, requestPush, requestPushTag, requestRenameBranch, requestStage, requestSwitch, requestUpdate } from './api.ts'
 import { emitGitMutated, onGitMutated } from './git-events.ts'
 import { appendPage, buildBranchRows, groupChanges, historyQueryFor, type BranchRow, type ChangeRow, type HistoryFilters } from './git-panel-data.ts'
 import { EMPTY_HISTORY_FILTERS } from './git-panel-data.ts'
@@ -384,6 +384,23 @@ const GitHistoryPanelData = forwardRef<GitHistoryPanelDataHandle, {
     })
   }, [cwd, loadAll, pushToast, runGuarded, t])
 
+  /** Publish ONE local tag. Its own verb, apart from the branch push: `git
+   * push` sends the branch alone, so a tag made on an already-pushed commit
+   * would otherwise never reach the remote. Deliberately no refetch: tags are
+   * local refs and a remote tag changes nothing the panel can see. */
+  const onPushTag = useCallback((name: string): void => {
+    void runGuarded(async () => {
+      const result = await requestPushTag(cwd, name)
+      if (!result.ok) throw new Error(result.error)
+      pushToast(
+        result.pushed
+          ? t('panel.tagPushDone', { tag: result.tag, remote: result.remote })
+          : t('panel.tagPushUpToDate', { tag: result.tag, remote: result.remote }),
+        'success',
+      )
+    })
+  }, [cwd, pushToast, runGuarded, t])
+
   const onToggleCommit = useCallback((hash: string): void => {
     if (expanded === hash) {
       setExpanded(null)
@@ -515,6 +532,7 @@ const GitHistoryPanelData = forwardRef<GitHistoryPanelDataHandle, {
         onFilters={onHistoryFilters}
         onCreateBranch={onCreate}
         onCreateTag={onCreateTag}
+        onPushTag={onPushTag}
         pushToast={pushToast}
       />
     </div>

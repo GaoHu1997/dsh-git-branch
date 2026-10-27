@@ -5,9 +5,9 @@
  */
 
 import type {
-  AiCommitMessageBody, AiCommitMessageResult, ChangesResult, CommitFilesResult, CommitResult, CreateBranchResult, CreateTagResult, CreateWorktreeResult, DeleteBranchResult, EnsureDirectoryResult, FetchResult, GroupWorkspacesResult, InspectWorktreeResult, LogResult, PathExistsResult, PurgeDirectoryResult, RemoveWorktreeResult, RenameBranchResult, RepoStatus, RouteError, StageBody, StageResult, SwitchResult, UpdateResult, PushResult, WorktreesAllResult,
+  AiCommitMessageBody, AiCommitMessageResult, ChangesResult, CommitFilesResult, CommitResult, CreateBranchResult, CreateTagResult, CreateWorktreeResult, DeleteBranchResult, EnsureDirectoryResult, FetchResult, GroupWorkspacesResult, InspectWorktreeResult, LogResult, PathExistsResult, PurgeDirectoryResult, PushTagResult, RemoveWorktreeResult, RenameBranchResult, RepoStatus, RouteError, StageBody, StageResult, SwitchResult, UpdateResult, PushResult, WorktreesAllResult,
 } from '../wire.ts'
-import { ROUTE_AI_COMMIT_MESSAGE, ROUTE_BRANCH, ROUTE_BRANCH_DELETE, ROUTE_BRANCH_RENAME, ROUTE_CHANGES, ROUTE_COMMIT, ROUTE_COMMIT_FILES, ROUTE_ENSURE_DIRECTORY, ROUTE_EXISTS, ROUTE_FETCH, ROUTE_GROUP, ROUTE_INSPECT, ROUTE_LOG, ROUTE_PUSH, ROUTE_PURGE, ROUTE_REMOVE, ROUTE_STAGE, ROUTE_STATUS, ROUTE_SWITCH, ROUTE_TAG, ROUTE_UPDATE, ROUTE_WORKTREE, ROUTE_WORKTREES_ALL } from '../wire.ts'
+import { ROUTE_AI_COMMIT_MESSAGE, ROUTE_BRANCH, ROUTE_BRANCH_DELETE, ROUTE_BRANCH_RENAME, ROUTE_CHANGES, ROUTE_COMMIT, ROUTE_COMMIT_FILES, ROUTE_ENSURE_DIRECTORY, ROUTE_EXISTS, ROUTE_FETCH, ROUTE_GROUP, ROUTE_INSPECT, ROUTE_LOG, ROUTE_PUSH, ROUTE_PURGE, ROUTE_REMOVE, ROUTE_STAGE, ROUTE_STATUS, ROUTE_SWITCH, ROUTE_TAG, ROUTE_TAG_PUSH, ROUTE_UPDATE, ROUTE_WORKTREE, ROUTE_WORKTREES_ALL } from '../wire.ts'
 
 /** One route call outcome: the parsed body, or the error envelope text. */
 type Call<T> = (T & { ok: true }) | { ok: false; error: string }
@@ -319,6 +319,16 @@ export function requestCreateTag(
     ...(target === undefined || target === '' ? {} : { target }),
     ...(message === undefined || message.trim() === '' ? {} : { message }),
   })
+}
+
+/**
+ * Push ONE local tag to its remote (the host resolves which remote). Unlike
+ * {@link requestPush}, which sends the current branch alone.
+ * @param repoPath - absolute directory inside the repository.
+ * @param name - an existing local tag name (verified host-side).
+ */
+export function requestPushTag(repoPath: string, name: string): Promise<Call<PushTagResult>> {
+  return post<PushTagResult>(ROUTE_TAG_PUSH, { repoPath, name })
 }
 
 /**

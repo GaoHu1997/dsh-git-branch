@@ -39,6 +39,15 @@ export function classifyRefs(refs: readonly string[]): CommitRefBadge[] {
   return badges
 }
 
+/**
+ * The TAG names one commit's decoration carries, in decoration order — the
+ * per-tag publish targets the commit menu offers. Built on
+ * {@link classifyRefs} so "what counts as a tag" has exactly one definition.
+ */
+export function commitTags(refs: readonly string[]): string[] {
+  return classifyRefs(refs).filter(badge => badge.kind === 'tag').map(badge => badge.text)
+}
+
 /** A staged/unstaged view row derived from one working-tree change. */
 export interface ChangeRow {
   path: string

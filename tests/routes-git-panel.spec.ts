@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Exec, ExecResult } from '../src/git.ts'
 import {
-  handleAiCommitMessage, handleChanges, handleCommit, handleCommitFiles, handleCreateTag, handleLog, handleStage,
+  handleAiCommitMessage, handleChanges, handleCommit, handleCommitFiles, handleCreateTag, handleLog, handlePushTag, handleStage,
   type LlmStreamRuntime, type RouteDeps,
 } from '../src/routes.ts'
 
@@ -218,6 +218,93 @@ describe('handleCreateTag', () => {
   it('reports a non-repository path as 400', async () => {
     const exec = scripted({ 'rev-parse --show-toplevel': { code: 128, stderr: 'fatal: not a git repository' } })
     const result = await handleCreateTag(depsWith(exec), { repoPath: '/repo', name: 'v1' })
+    expect(result).toMatchObject({ status: 400, body: { error: expect.stringContaining('is not inside a git repository') } })
+  })
+})
+
+describe('handlePushTag', () => {
+  /** probeRepo facts plus a local v1.0.0 tag and an origin upstream. */
+  const TAG_REPO_CALLS = {
+    ...REPO_CALLS,
+    'for-each-ref refs/tags': { stdout: 'v1.0.0\n' },
+    'rev-parse --abbrev-ref --symbolic-full-name @{u}': { stdout: 'origin/main\n' },
+    'rev-parse --verify refs/tags/v1.0.0': { stdout: 'aaaa\n' },
+  } satisfies Record<string, Partial<ExecResult>>
+
+  it('publishes the local tag to the upstream remote', async () => {
+    const calls: string[][] = []
+    const exec: Exec = async (_file, args) => {
+      calls.push([...args])
+      const entry = Object.entries(TAG_REPO_CALLS).find(([prefix]) => args.join(' ').startsWith(prefix))
+      if (entry !== undefined) return { code: 0, stdout: '', stderr: '', ...entry[1] }
+      return { code: 0, stdout: '', stderr: '' }
+    }
+    const result = await handlePushTag(depsWith(exec), { repoPath: '/repo', name: 'v1.0.0' })
+    expect(result).toMatchObject({ status: 200, body: { tag: 'v1.0.0', remote: 'origin', pushed: true } })
+    expect(calls.find(args => args[0] === 'push')).toEqual(['push', 'origin', 'refs/tags/v1.0.0:refs/tags/v1.0.0'])
+  })
+
+  it('reports an already-published tag without pushing again', async () => {
+    const pushed: string[][] = []
+    const exec: Exec = async (_file, args) => {
+      if (args[0] === 'push') pushed.push([...args])
+      const entry = Object.entries({
+        ...TAG_REPO_CALLS,
+        'ls-remote --refs origin refs/tags/v1.0.0': { stdout: 'aaaa\trefs/tags/v1.0.0\n' },
+      }).find(([prefix]) => args.join(' ').startsWith(prefix))
+      if (entry !== undefined) return { code: 0, stdout: '', stderr: '', ...entry[1] }
+      return { code: 0, stdout: '', stderr: '' }
+    }
+    const result = await handlePushTag(depsWith(exec), { repoPath: '/repo', name: 'v1.0.0' })
+    expect(result).toMatchObject({ status: 200, body: { pushed: false } })
+    expect(pushed).toEqual([])
+  })
+
+  it('maps a refused overwrite to 400 with the git diagnostics intact', async () => {
+    const exec = scripted({
+      ...TAG_REPO_CALLS,
+      'ls-remote --refs origin refs/tags/v1.0.0': { stdout: 'bbbb\trefs/tags/v1.0.0\n' },
+      'push origin refs/tags/v1.0.0:refs/tags/v1.0.0': {
+        code: 1,
+        stderr: ' ! [rejected]        v1.0.0 -> v1.0.0 (already exists)\n'
+          + 'error: failed to push some refs\n'
+          + 'hint: Updates were rejected because the tag already exists in the remote.',
+      },
+    })
+    const result = await handlePushTag(depsWith(exec), { repoPath: '/repo', name: 'v1.0.0' })
+    expect(result).toMatchObject({ status: 400, body: { error: expect.stringContaining('already exists in the remote') } })
+  })
+
+  it('refuses to guess the remote when several exist and none is upstream', async () => {
+    const exec = scripted({
+      ...REPO_CALLS,
+      'for-each-ref refs/tags': { stdout: 'v1.0.0\n' },
+      'rev-parse --abbrev-ref --symbolic-full-name @{u}': { code: 128, stderr: 'fatal: no upstream configured' },
+      'config --get remote.pushDefault': { code: 1 },
+      remote: { stdout: 'origin\nupstream\n' },
+    })
+    const result = await handlePushTag(depsWith(exec), { repoPath: '/repo', name: 'v1.0.0' })
+    expect(result).toMatchObject({ status: 400, body: { error: expect.stringContaining('multiple remotes') } })
+  })
+
+  it('rejects a name that is not a local tag of this repository', async () => {
+    const exec = scripted({ ...REPO_CALLS, 'for-each-ref refs/tags': { stdout: 'v1.0.0\n' } })
+    const result = await handlePushTag(depsWith(exec), { repoPath: '/repo', name: 'v9.9.9' })
+    expect(result).toMatchObject({ status: 400, body: { error: expect.stringContaining('is not a local tag') } })
+  })
+
+  it('validates the body before spawning git', async () => {
+    const exec = scripted({})
+    expect((await handlePushTag(depsWith(exec), { repoPath: 'rel', name: 'v1' })).status).toBe(400)
+    expect((await handlePushTag(depsWith(exec), { repoPath: '/repo', name: '  ' })).status).toBe(400)
+    expect((await handlePushTag(depsWith(exec), { repoPath: '/repo', name: '-evil' })).status).toBe(400)
+    expect((await handlePushTag(depsWith(exec), { repoPath: '/repo', name: 'v'.repeat(301) })).status).toBe(400)
+    expect((await handlePushTag(depsWith(exec), { repoPath: '/repo', name: 'v1', extra: 1 })).status).toBe(400)
+  })
+
+  it('reports a non-repository path as 400', async () => {
+    const exec = scripted({ 'rev-parse --show-toplevel': { code: 128, stderr: 'fatal: not a git repository' } })
+    const result = await handlePushTag(depsWith(exec), { repoPath: '/repo', name: 'v1' })
     expect(result).toMatchObject({ status: 400, body: { error: expect.stringContaining('is not inside a git repository') } })
   })
 })

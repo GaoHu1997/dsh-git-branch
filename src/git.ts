@@ -661,6 +661,84 @@ export async function pushBranch(exec: Exec, cwd: string): Promise<PushOutcome> 
   return { branch, pushed: before !== undefined && after !== undefined && before.trim() !== after.trim() }
 }
 
+/** Every LOCAL tag name of the repository, in git's own sort order. */
+export async function listTagNames(exec: Exec, cwd: string): Promise<string[]> {
+  const text = await git(exec, cwd, ['for-each-ref', 'refs/tags', '--format=%(refname:short)'])
+  return text.split('\n').map(line => line.trim()).filter(line => line !== '')
+}
+
+/** Where a one-off push should go, or why no remote could be picked. */
+export type PushRemoteChoice =
+  | { readonly ok: true; readonly remote: string }
+  | { readonly ok: false; readonly message: string }
+
+/**
+ * Pick the remote ONE tag push goes to, in fallback order: the checked-out
+ * branch's upstream remote, `remote.pushDefault`, then the only remote there
+ * is. Ambiguity is reported instead of guessed — a tag pushed to the wrong
+ * remote is a published mistake, not an inconvenience.
+ * @param exec - executor seam.
+ * @param cwd - directory whose checked-out branch supplies the upstream.
+ * @returns the remote name, or the caller-side reason none could be chosen.
+ */
+export async function resolvePushRemote(exec: Exec, cwd: string): Promise<PushRemoteChoice> {
+  const upstream = (await gitMaybe(exec, cwd, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']))?.trim() ?? ''
+  const slash = upstream.indexOf('/')
+  if (slash > 0) return { ok: true, remote: upstream.slice(0, slash) }
+  const pushDefault = (await gitMaybe(exec, cwd, ['config', '--get', 'remote.pushDefault']))?.trim() ?? ''
+  if (pushDefault !== '') return { ok: true, remote: pushDefault }
+  const remotes = ((await gitMaybe(exec, cwd, ['remote'])) ?? '')
+    .split('\n').map(line => line.trim()).filter(line => line !== '')
+  const only = remotes.length === 1 ? remotes[0] : undefined
+  if (only !== undefined) return { ok: true, remote: only }
+  return { ok: false, message: remotes.length === 0
+    ? 'no remote to push the tag to: the current branch has no upstream and the repository has none either'
+    : `multiple remotes (${remotes.join(', ')}) and the current branch has no upstream: set one, or git config remote.pushDefault <name>` }
+}
+
+/** Outcome of {@link pushTag}: the tag, where it went, and whether it moved. */
+export interface TagPushOutcome {
+  tag: string
+  remote: string
+  pushed: boolean
+}
+
+/**
+ * Push ONE existing local tag to `remote` (`git push <remote>
+ * refs/tags/<name>:refs/tags/<name>`) — the publish step a tag needs and a
+ * branch push never performs: `git push` sends the current branch alone, so a
+ * tag made on an already-pushed commit is invisible to the remote.
+ *
+ * The tag must already exist locally (the route verifies it against
+ * {@link listTagNames}); a remote that already carries the SAME tag object is
+ * reported as `pushed: false` without running the push at all. The refspec
+ * always names both sides explicitly, so no configured push refspec (a mirror,
+ * a `push.default=upstream` branch) can widen what a menu click publishes, and
+ * tags are never deleted or overwritten: `--force` is deliberately absent, and
+ * a remote tag pointing somewhere else makes git refuse (mapped to 400).
+ *
+ * The cn-accelerate rewrite is never injected here (no {@link accelArgs}
+ * parameter exists, like {@link pushBranch}): a mirror has no `receive-pack` —
+ * and the pre-push probe must see the very remote the push targets, or the
+ * `pushed` flag would compare two different servers.
+ * @param exec - executor seam.
+ * @param cwd - any directory inside the repository (tag refs are shared).
+ * @param name - an existing local tag name.
+ * @param remote - the remote to publish to (see {@link resolvePushRemote}).
+ * @returns the tag, the remote, and whether the push had to run.
+ */
+export async function pushTag(exec: Exec, cwd: string, name: string, remote: string): Promise<TagPushOutcome> {
+  const ref = `refs/tags/${name}`
+  const local = (await git(exec, cwd, ['rev-parse', '--verify', ref])).trim()
+  const listed = await gitMaybe(exec, cwd, ['ls-remote', '--refs', remote, ref], NETWORK_TIMEOUT_MS)
+  const present = (listed ?? '').split('\n')
+    .map(line => line.trim().split(/\s+/)[0] ?? '')
+    .includes(local)
+  if (present) return { tag: name, remote, pushed: false }
+  await git(exec, cwd, ['push', remote, `${ref}:${ref}`], NETWORK_TIMEOUT_MS)
+  return { tag: name, remote, pushed: true }
+}
+
 /** Guard for route inputs: a non-empty absolute directory path. */
 export function isAbsoluteDir(value: string): boolean {
   return value.trim() !== '' && isAbsolute(value)

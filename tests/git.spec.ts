@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { join, normalize, resolve } from 'node:path'
 import {
-  accelArgs, addWorktree, addWorktreeCutout, appendWorktreeExclude, createBranch, cutoutBranchName, deleteBranch, fetchAll, inspectWorktree, NETWORK_TIMEOUT_MS, probeRepo, probeWorkspaceGit, pushBranch, removeWorktree, renameBranch, switchBranch, updateBranch, WORKTREE_EXCLUDE_RULE,
+  accelArgs, addWorktree, addWorktreeCutout, appendWorktreeExclude, createBranch, cutoutBranchName, deleteBranch, fetchAll, inspectWorktree, listTagNames, NETWORK_TIMEOUT_MS, probeRepo, probeWorkspaceGit, pushBranch, pushTag, removeWorktree, renameBranch, resolvePushRemote, switchBranch, updateBranch, WORKTREE_EXCLUDE_RULE,
   type ExcludeSeams, type Exec, type ExecResult,
 } from '../src/git.ts'
 
@@ -510,6 +510,149 @@ describe('pushBranch', () => {
       expect(args).not.toContain('-c')
     }
     expect(argvs[1]).toEqual(['push'])
+  })
+})
+
+describe('listTagNames', () => {
+  it('lists the local tag names, dropping the blank tail line', async () => {
+    const exec = scripted([
+      { args: ['for-each-ref', 'refs/tags', '--format=%(refname:short)'], out: { stdout: 'v1.0.6\nv1/release\n' } },
+    ])
+    expect(await listTagNames(exec, '/repo')).toEqual(['v1.0.6', 'v1/release'])
+  })
+
+  it('answers an empty list for a repository with no tags', async () => {
+    const exec = scripted([
+      { args: ['for-each-ref', 'refs/tags', '--format=%(refname:short)'], out: { stdout: '' } },
+    ])
+    expect(await listTagNames(exec, '/repo')).toEqual([])
+  })
+})
+
+describe('resolvePushRemote', () => {
+  it('takes the checked-out branch upstream remote', async () => {
+    const exec = scripted([
+      { args: ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], out: { stdout: 'origin/main\n' } },
+    ])
+    expect(await resolvePushRemote(exec, '/repo')).toEqual({ ok: true, remote: 'origin' })
+  })
+
+  it('falls back to remote.pushDefault when the branch has no upstream', async () => {
+    const exec = scripted([
+      { args: ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'],
+        out: { code: 128, stderr: 'fatal: no upstream configured for branch' } },
+      { args: ['config', '--get', 'remote.pushDefault'], out: { stdout: 'fork\n' } },
+    ])
+    expect(await resolvePushRemote(exec, '/repo')).toEqual({ ok: true, remote: 'fork' })
+  })
+
+  it('falls back to the only remote there is', async () => {
+    const exec = scripted([
+      { args: ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'],
+        out: { code: 128, stderr: 'fatal: HEAD does not point to a branch' } },
+      { args: ['config', '--get', 'remote.pushDefault'], out: { code: 1 } },
+      { args: ['remote'], out: { stdout: 'origin\n' } },
+    ])
+    expect(await resolvePushRemote(exec, '/repo')).toEqual({ ok: true, remote: 'origin' })
+  })
+
+  it('refuses to guess between several remotes', async () => {
+    const exec = scripted([
+      { args: ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'],
+        out: { code: 128, stderr: 'fatal: HEAD does not point to a branch' } },
+      { args: ['config', '--get', 'remote.pushDefault'], out: { code: 1 } },
+      { args: ['remote'], out: { stdout: 'origin\nupstream\n' } },
+    ])
+    const choice = await resolvePushRemote(exec, '/repo')
+    expect(choice.ok).toBe(false)
+    expect(choice.ok ? '' : choice.message).toContain('multiple remotes (origin, upstream)')
+    expect(choice.ok ? '' : choice.message).toContain('remote.pushDefault')
+  })
+
+  it('reports a repository with no remote at all', async () => {
+    const exec = scripted([
+      { args: ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'],
+        out: { code: 128, stderr: 'fatal: HEAD does not point to a branch' } },
+      { args: ['config', '--get', 'remote.pushDefault'], out: { code: 1 } },
+      { args: ['remote'], out: { stdout: '\n' } },
+    ])
+    const choice = await resolvePushRemote(exec, '/repo')
+    expect(choice.ok).toBe(false)
+    expect(choice.ok ? '' : choice.message).toContain('no remote to push the tag to')
+  })
+})
+
+describe('pushTag', () => {
+  it('pushes the one refspec, explicitly named on both sides', async () => {
+    const argvs: string[][] = []
+    const exec: Exec = async (_file, args) => {
+      argvs.push([...args])
+      if (args[0] === 'rev-parse') return { code: 0, stdout: 'aaaa\n', stderr: '' }
+      if (args[0] === 'ls-remote') return { code: 0, stdout: '', stderr: '' }
+      return { code: 0, stdout: '', stderr: '' }
+    }
+    const outcome = await pushTag(exec, '/repo', 'v1.0.6', 'origin')
+    expect(outcome).toEqual({ tag: 'v1.0.6', remote: 'origin', pushed: true })
+    expect(argvs).toEqual([
+      ['rev-parse', '--verify', 'refs/tags/v1.0.6'],
+      ['ls-remote', '--refs', 'origin', 'refs/tags/v1.0.6'],
+      ['push', 'origin', 'refs/tags/v1.0.6:refs/tags/v1.0.6'],
+    ])
+    // No force, no mirror rewrite: a menu click publishes one tag, never
+    // overwrites a tag someone else already published.
+    for (const args of argvs) {
+      expect(args).not.toContain('--force')
+      expect(args).not.toContain('-f')
+      expect(args).not.toContain('-c')
+    }
+  })
+
+  it('skips the push when the remote already carries the same tag object', async () => {
+    // The scripted executor throws on an unexpected call, so a third call
+    // (the push) fails the test on its own.
+    const exec = scripted([
+      { args: ['rev-parse', '--verify', 'refs/tags/v1.0.6'], out: { stdout: 'aaaa\n' } },
+      { args: ['ls-remote', '--refs', 'origin', 'refs/tags/v1.0.6'],
+        out: { stdout: 'aaaa\trefs/tags/v1.0.6\n' } },
+    ])
+    expect(await pushTag(exec, '/repo', 'v1.0.6', 'origin'))
+      .toEqual({ tag: 'v1.0.6', remote: 'origin', pushed: false })
+  })
+
+  it('compares the ANNOTATED tag object, not the commit it peels to', async () => {
+    // An annotated tag's own object id is what both sides report: a remote
+    // carrying the same tag object is up to date even though `^{}` differs.
+    const exec = scripted([
+      { args: ['rev-parse', '--verify', 'refs/tags/v1.0.6'], out: { stdout: 'tagobj\n' } },
+      { args: ['ls-remote', '--refs', 'origin', 'refs/tags/v1.0.6'],
+        out: { stdout: 'tagobj\trefs/tags/v1.0.6\n' } },
+    ])
+    expect(await pushTag(exec, '/repo', 'v1.0.6', 'origin')).toMatchObject({ pushed: false })
+  })
+
+  it("surfaces git's refusal when the remote tag points somewhere else", async () => {
+    const exec = scripted([
+      { args: ['rev-parse', '--verify', 'refs/tags/v1.0.6'], out: { stdout: 'aaaa\n' } },
+      { args: ['ls-remote', '--refs', 'origin', 'refs/tags/v1.0.6'],
+        out: { stdout: 'bbbb\trefs/tags/v1.0.6\n' } },
+      { args: ['push', 'origin', 'refs/tags/v1.0.6:refs/tags/v1.0.6'],
+        out: { code: 1, stderr: 'error: failed to push some refs\nhint: the tag already exists in the remote' } },
+    ])
+    await expect(pushTag(exec, '/repo', 'v1.0.6', 'origin'))
+      .rejects.toThrow('already exists in the remote')
+  })
+
+  it('gives both network calls the wide budget, not the local default', async () => {
+    const seen: Array<number | undefined> = []
+    const exec: Exec = async (_file, args, options) => {
+      seen.push(options.timeoutMs)
+      if (args[0] === 'rev-parse') return { code: 0, stdout: 'aaaa\n', stderr: '' }
+      return { code: 0, stdout: '', stderr: '' }
+    }
+    await pushTag(exec, '/repo', 'v1.0.6', 'origin')
+    expect(seen[0]).toBeUndefined()
+    expect(seen[1]).toBe(NETWORK_TIMEOUT_MS)
+    expect(seen[2]).toBe(NETWORK_TIMEOUT_MS)
   })
 })
 

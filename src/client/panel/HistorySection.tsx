@@ -5,8 +5,11 @@
  * author, and the absolute commit time. CLICKING a row expands the commit's
  * changed files INLINE below it (exactly one open at a time), loading them on
  * first open; RIGHT-CLICKING it opens the commit menu (copy hash, copy
- * subject, new branch here, tag here), which is where the history card's two
- * writing verbs live.
+ * subject, new branch here, tag here, and — for every tag the commit already
+ * carries — push that tag), which is where the history card's writing verbs
+ * live. Pushing a tag is offered per EXISTING tag rather than folded into the
+ * branch push: `git push` sends the branch alone, so a tag on an
+ * already-pushed commit would otherwise have no way out of the local repo.
  *
  * The head carries the three filters the card asks for, in this order —
  * author, branch (a ref to pin the walk on, or every ref), and a time window
@@ -26,7 +29,7 @@ import type { CommitEntry, CommitFileEntry } from '../../wire.ts'
 import { branchNameIssue } from '../../normalize.ts'
 import { buildGraph, graphWidth } from '../git-graph.ts'
 import type { GraphRow } from '../git-graph.ts'
-import { classifyRefs } from '../git-panel-data.ts'
+import { classifyRefs, commitTags } from '../git-panel-data.ts'
 import type { HistoryFilters, HistoryRange } from '../git-panel-data.ts'
 import type { GitPanelTranslator } from '../panel-types.ts'
 import { CommitGraph, CommitGraphContinuation, LANE_PITCH } from './CommitGraph.tsx'
@@ -222,13 +225,17 @@ export interface HistorySectionProps {
   onFilters: (filters: HistoryFilters) => void
   onCreateBranch: (name: string, from: string) => void
   onCreateTag: (name: string, target: string, message: string) => void
+  /** Publish ONE tag this repository already has — offered per tag badge,
+   * because creating a tag is local while pushing it is a release step (a
+   * branch push never sends tags, and none of them is implied by the other). */
+  onPushTag: (name: string) => void
   pushToast: (text: string, tone: 'success' | 'error') => void
 }
 
 export function HistorySection(props: HistorySectionProps): JSX.Element {
   const {
     t, commits, loaded, loadError, loading, hasMore, loadingMore, expanded, filesByHash,
-    filters, branches, busy, onLoadMore, onToggle, onFilters, onCreateBranch, onCreateTag, pushToast,
+    filters, branches, busy, onLoadMore, onToggle, onFilters, onCreateBranch, onCreateTag, onPushTag, pushToast,
   } = props
   const [menu, setMenu] = useState<CommitMenuState | null>(null)
   const [dialog, setDialog] = useState<CommitDialogState | null>(null)
@@ -369,6 +376,9 @@ export function HistorySection(props: HistorySectionProps): JSX.Element {
       ? t('createFlyAskFrom', { branch: dialog.commit.short })
       : t('panel.tagTitle')
 
+  /** Tags the right-clicked commit carries: one publish item each. */
+  const menuTags = menu === null ? [] : commitTags(menu.commit.refs)
+
   return (
     <section className={`${css.section} ${css.sectionFill} ${css.sectionHistory}`} aria-label={t('panel.history')}>
       <div className={css.historyHead}>
@@ -406,6 +416,18 @@ export function HistorySection(props: HistorySectionProps): JSX.Element {
           <button type="button" className={css.menuItem} role="menuitem" disabled={busy} onClick={() => openDialog('tag', menu.commit)}>
             {t('panel.branchTag')}
           </button>
+          {menuTags.map(tag => (
+            <button
+              key={tag}
+              type="button"
+              className={css.menuItem}
+              role="menuitem"
+              disabled={busy}
+              onClick={() => { setMenu(null); onPushTag(tag) }}
+            >
+              {t('panel.tagPush', { tag })}
+            </button>
+          ))}
         </FloatMenu>
       ) : null}
       <Modal

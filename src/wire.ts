@@ -79,6 +79,9 @@ export const ROUTE_COMMIT_FILES = `${ROUTE_PREFIX}/commit-files`
 /** POST ROUTE_PREFIX/tag — create a tag at an existing commit. */
 export const ROUTE_TAG = `${ROUTE_PREFIX}/tag`
 
+/** POST ROUTE_PREFIX/tag-push — push ONE existing local tag to its remote. */
+export const ROUTE_TAG_PUSH = `${ROUTE_PREFIX}/tag-push`
+
 /** POST ROUTE_PREFIX/ai-commit-message — one-shot LLM commit message from
  * the staged diff (mounted only where the host provides the llm service). */
 export const ROUTE_AI_COMMIT_MESSAGE = `${ROUTE_PREFIX}/ai-commit-message`
@@ -581,6 +584,25 @@ export interface CreateTagResult {
   tag: string
   /** The commit hash the tag points at. */
   hash: string
+}
+
+/** POST tag-push request body. */
+export interface PushTagBody {
+  /** Any directory inside the repository (tag refs are repository-wide). */
+  repoPath: string
+  /** An EXISTING local tag name, verified server-side before any push. */
+  name: string
+}
+
+/** POST tag-push response body. */
+export interface PushTagResult {
+  /** The tag that was the subject of the push. */
+  tag: string
+  /** The remote the tag was pushed to (resolved server-side). */
+  remote: string
+  /** False when the remote already carried this exact tag object — nothing
+   * was sent. True once the push command actually ran. */
+  pushed: boolean
 }
 
 /** One file row of POST commit-files. */
