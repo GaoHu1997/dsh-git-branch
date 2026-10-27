@@ -5,9 +5,9 @@
  */
 
 import type {
-  AiCommitMessageBody, AiCommitMessageResult, ChangesResult, CommitFilesResult, CommitResult, CreateBranchResult, CreateWorktreeResult, DeleteBranchResult, EnsureDirectoryResult, FetchResult, GroupWorkspacesResult, InspectWorktreeResult, LogResult, PathExistsResult, PurgeDirectoryResult, RemoveWorktreeResult, RenameBranchResult, RepoStatus, RouteError, StageBody, StageResult, SwitchResult, UpdateResult, PushResult, WorktreesAllResult,
+  AiCommitMessageBody, AiCommitMessageResult, ChangesResult, CommitFilesResult, CommitResult, CreateBranchResult, CreateTagResult, CreateWorktreeResult, DeleteBranchResult, EnsureDirectoryResult, FetchResult, GroupWorkspacesResult, InspectWorktreeResult, LogResult, PathExistsResult, PurgeDirectoryResult, RemoveWorktreeResult, RenameBranchResult, RepoStatus, RouteError, StageBody, StageResult, SwitchResult, UpdateResult, PushResult, WorktreesAllResult,
 } from '../wire.ts'
-import { ROUTE_AI_COMMIT_MESSAGE, ROUTE_BRANCH, ROUTE_BRANCH_DELETE, ROUTE_BRANCH_RENAME, ROUTE_CHANGES, ROUTE_COMMIT, ROUTE_COMMIT_FILES, ROUTE_ENSURE_DIRECTORY, ROUTE_EXISTS, ROUTE_FETCH, ROUTE_GROUP, ROUTE_INSPECT, ROUTE_LOG, ROUTE_PUSH, ROUTE_PURGE, ROUTE_REMOVE, ROUTE_STAGE, ROUTE_STATUS, ROUTE_SWITCH, ROUTE_UPDATE, ROUTE_WORKTREE, ROUTE_WORKTREES_ALL } from '../wire.ts'
+import { ROUTE_AI_COMMIT_MESSAGE, ROUTE_BRANCH, ROUTE_BRANCH_DELETE, ROUTE_BRANCH_RENAME, ROUTE_CHANGES, ROUTE_COMMIT, ROUTE_COMMIT_FILES, ROUTE_ENSURE_DIRECTORY, ROUTE_EXISTS, ROUTE_FETCH, ROUTE_GROUP, ROUTE_INSPECT, ROUTE_LOG, ROUTE_PUSH, ROUTE_PURGE, ROUTE_REMOVE, ROUTE_STAGE, ROUTE_STATUS, ROUTE_SWITCH, ROUTE_TAG, ROUTE_UPDATE, ROUTE_WORKTREE, ROUTE_WORKTREES_ALL } from '../wire.ts'
 
 /** One route call outcome: the parsed body, or the error envelope text. */
 type Call<T> = (T & { ok: true }) | { ok: false; error: string }
@@ -250,18 +250,43 @@ export function requestCommit(repoPath: string, message: string): Promise<Call<C
 }
 
 /**
+ * What to ask the history endpoint for: a page of commits narrowed by ref,
+ * author and a time window. Every field is optional; an absent `ref` means
+ * "everything reachable" (`all` widens that to every ref, tags included).
+ */
+export interface HistoryQuery {
+  /** Page size (server-capped at 200). */
+  readonly limit?: number
+  /** Offset into the history. */
+  readonly skip?: number
+  /** Starting rev (a branch name); absent = HEAD. */
+  readonly ref?: string
+  /** Walk every ref, not just the checked-out one. Ignored when `ref` is set. */
+  readonly all?: boolean
+  /** Restrict to commits whose author matches (a substring, or a `Name <mail>` pair). */
+  readonly author?: string
+  /** Lower bound of the commit date, epoch milliseconds. */
+  readonly since?: number
+  /** Upper bound of the commit date, epoch milliseconds. */
+  readonly until?: number
+}
+
+/**
  * One page of commit history of the checkout.
  * @param repoPath - absolute directory inside the repository.
- * @param limit - page size (server-capped at 200).
- * @param skip - offset into the history.
- * @param ref - optional starting rev (a branch name); absent = HEAD.
+ * @param query - paging and the branch/author/time narrowing.
  */
-export function requestLog(repoPath: string, limit?: number, skip?: number, ref?: string): Promise<Call<LogResult>> {
+export function requestLog(repoPath: string, query: HistoryQuery = {}): Promise<Call<LogResult>> {
+  const { limit, skip, ref, all, author, since, until } = query
   return post<LogResult>(ROUTE_LOG, {
     repoPath,
     ...(limit === undefined ? {} : { limit }),
     ...(skip === undefined ? {} : { skip }),
     ...(ref === undefined || ref === '' ? {} : { ref }),
+    ...(all === true ? { all } : {}),
+    ...(author === undefined || author === '' ? {} : { author }),
+    ...(since === undefined ? {} : { since }),
+    ...(until === undefined ? {} : { until }),
   })
 }
 
@@ -272,6 +297,28 @@ export function requestLog(repoPath: string, limit?: number, skip?: number, ref?
  */
 export function requestCommitFiles(repoPath: string, hash: string): Promise<Call<CommitFilesResult>> {
   return post<CommitFilesResult>(ROUTE_COMMIT_FILES, { repoPath, hash })
+}
+
+/**
+ * Create a tag pointing at one commit (annotated when a message is given,
+ * lightweight otherwise). Local only: pushing tags is a separate release step.
+ * @param repoPath - absolute directory inside the repository.
+ * @param name - the new tag name.
+ * @param target - the commit to tag; absent = HEAD.
+ * @param message - annotation message; absent = lightweight tag.
+ */
+export function requestCreateTag(
+  repoPath: string,
+  name: string,
+  target?: string,
+  message?: string,
+): Promise<Call<CreateTagResult>> {
+  return post<CreateTagResult>(ROUTE_TAG, {
+    repoPath,
+    name,
+    ...(target === undefined || target === '' ? {} : { target }),
+    ...(message === undefined || message.trim() === '' ? {} : { message }),
+  })
 }
 
 /**

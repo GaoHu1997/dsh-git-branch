@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Exec, ExecResult } from '../src/git.ts'
 import {
-  collectAiDiff, commitFiles, isStageablePath, logHistory, parseLogOutput, parseNameStatus, parseNumstatCounts, parseStatusPorcelainZ, stagePaths, workingChanges,
+  collectAiDiff, commitFiles, createTag, isStageablePath, logHistory, parseLogOutput, parseNameStatus, parseNumstatCounts, parseStatusPorcelainZ, stagePaths, workingChanges,
 } from '../src/git.ts'
 
 describe('parseStatusPorcelainZ', () => {
@@ -176,7 +176,7 @@ describe('logHistory', () => {
 
   it('answers an empty page for an unborn checkout (probe HEAD, not the stderr text)', async () => {
     const exec = scripted({
-      'log --max-count=50 --skip=0 --date=iso-strict': {
+      'log --max-count=50 --skip=0 --topo-order --date=iso-strict': {
         code: 128,
         stderr: "fatal: your current branch 'master' does not have any commits yet",
       },
@@ -188,7 +188,7 @@ describe('logHistory', () => {
 
   it('rethrows a log failure when HEAD exists (a real error, not unborn)', async () => {
     const exec = scripted({
-      'log --max-count=50 --skip=0 --date=iso-strict': { code: 128, stderr: 'fatal: bad object' },
+      'log --max-count=50 --skip=0 --topo-order --date=iso-strict': { code: 128, stderr: 'fatal: bad object' },
       'rev-parse --verify --quiet HEAD': { stdout: 'abc123\n' },
     })
     await expect(logHistory(exec, '/repo', 50, 0)).rejects.toThrow(/bad object/)
@@ -202,7 +202,91 @@ describe('logHistory', () => {
     }
     await logHistory(exec, '/repo', 10, 5)
     const logCall = calls.find(args => args[0] === 'log')
-    expect(logCall).toEqual(['log', '--max-count=10', '--skip=5', '--date=iso-strict', expect.stringContaining('%x1f')])
+    // --topo-order is unconditional: the graph layout reads parents, and a
+    // date-ordered walk puts a branch's commit above the merge base it
+    // forked from, drawing edges into rows that do not exist yet.
+    expect(logCall).toEqual(['log', '--max-count=10', '--skip=5', '--topo-order', '--date=iso-strict', expect.stringContaining('%x1f')])
+    expect(logCall).not.toContain('--all')
+  })
+
+  it('walks every ref when the filter asks for all', async () => {
+    const calls: string[][] = []
+    const exec: Exec = async (_file, args) => {
+      calls.push([...args])
+      return { code: 0, stdout: '', stderr: '' }
+    }
+    await logHistory(exec, '/repo', 50, 0, undefined, { all: true })
+    expect(calls[0]).toContain('--all')
+  })
+
+  it('pushes the author and the resolved time bounds into the walk', async () => {
+    const calls: string[][] = []
+    const exec: Exec = async (_file, args) => {
+      calls.push([...args])
+      return { code: 0, stdout: '', stderr: '' }
+    }
+    const since = Date.UTC(2026, 9, 1)
+    const until = Date.UTC(2026, 9, 27)
+    await logHistory(exec, '/repo', 50, 0, undefined, { all: true, author: 'Ann', since, until })
+    expect(calls[0]).toContain('--author=Ann')
+    expect(calls[0]).toContain(`--since=${new Date(since).toISOString()}`)
+    expect(calls[0]).toContain(`--until=${new Date(until).toISOString()}`)
+  })
+
+  it('lets a pinned ref win over --all', async () => {
+    const calls: string[][] = []
+    const exec: Exec = async (_file, args) => {
+      calls.push([...args])
+      if (args[0] === 'rev-parse') return { code: 0, stdout: 'abc123\n', stderr: '' }
+      return { code: 0, stdout: '', stderr: '' }
+    }
+    await logHistory(exec, '/repo', 50, 0, 'main', { all: true })
+    const logCall = calls.find(args => args[0] === 'log')
+    // The verified object id - not the ref name - is what the walk starts at.
+    expect(logCall).not.toContain('--all')
+    expect(logCall).toContain('abc123')
+  })
+})
+
+describe('createTag', () => {
+  it('creates a lightweight tag when no message is given', async () => {
+    const calls: string[][] = []
+    const exec: Exec = async (_file, args) => {
+      calls.push([...args])
+      if (args[0] === 'rev-list') return { code: 0, stdout: 'deadbeef\n', stderr: '' }
+      return { code: 0, stdout: '', stderr: '' }
+    }
+    const result = await createTag(exec, '/repo', 'v1.0.0', 'abc123')
+    expect(calls[0]).toEqual(['tag', 'v1.0.0', 'abc123'])
+    expect(result).toEqual({ tag: 'v1.0.0', hash: 'deadbeef' })
+  })
+
+  it('creates an annotated tag when a message is given', async () => {
+    const calls: string[][] = []
+    const exec: Exec = async (_file, args) => {
+      calls.push([...args])
+      if (args[0] === 'rev-list') return { code: 0, stdout: 'deadbeef\n', stderr: '' }
+      return { code: 0, stdout: '', stderr: '' }
+    }
+    const result = await createTag(exec, '/repo', 'v2', 'abc123', 'release 2')
+    expect(calls[0]).toEqual(['tag', '-a', 'v2', '-m', 'release 2', 'abc123'])
+    expect(result.hash).toBe('deadbeef')
+  })
+
+  it('treats a blank message as no message at all', async () => {
+    const calls: string[][] = []
+    const exec: Exec = async (_file, args) => {
+      calls.push([...args])
+      if (args[0] === 'rev-list') return { code: 0, stdout: 'deadbeef\n', stderr: '' }
+      return { code: 0, stdout: '', stderr: '' }
+    }
+    await createTag(exec, '/repo', 'v3', undefined, '   ')
+    expect(calls[0]).toEqual(['tag', 'v3'])
+  })
+
+  it('surfaces a git refusal as a GitError', async () => {
+    const exec: Exec = async () => ({ code: 128, stdout: '', stderr: 'fatal: tag already exists' })
+    await expect(createTag(exec, '/repo', 'v1.0.0')).rejects.toThrow(/tag already exists/)
   })
 })
 

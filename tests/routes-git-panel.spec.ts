@@ -1,12 +1,12 @@
 /**
  * Git-panel route tests: body validation, staged executor runs, and the
- * failure envelopes of the six panel handlers.
+ * failure envelopes of the seven panel handlers.
  */
 
 import { describe, expect, it } from 'vitest'
 import type { Exec, ExecResult } from '../src/git.ts'
 import {
-  handleAiCommitMessage, handleChanges, handleCommit, handleCommitFiles, handleLog, handleStage,
+  handleAiCommitMessage, handleChanges, handleCommit, handleCommitFiles, handleCreateTag, handleLog, handleStage,
   type LlmStreamRuntime, type RouteDeps,
 } from '../src/routes.ts'
 
@@ -18,6 +18,7 @@ function depsWith(exec: Exec): RouteDeps {
     sectionFetchBeforeCreate: () => false,
     home: () => '/home/u',
     envHome: () => undefined,
+    dirExists: () => true,
   }
 }
 
@@ -30,6 +31,16 @@ function scripted(table: Record<string, Partial<ExecResult>>): Exec {
     return { code: 0, stdout: '', stderr: '', ...entry[1] }
   }
 }
+
+/** Repo facts as `probeRepo` reads them for the fictional /repo checkout. */
+const REPO_CALLS = {
+  'rev-parse --show-toplevel': { stdout: '/repo\n' },
+  'rev-parse --git-common-dir': { stdout: '/repo/.git\n' },
+  'branch --show-current': { stdout: 'main\n' },
+  'for-each-ref refs/heads': { stdout: 'main\n' },
+  'for-each-ref refs/remotes': { stdout: '' },
+  'worktree list --porcelain': { stdout: 'worktree /repo\nHEAD 1\nbranch refs/heads/main\n' },
+} satisfies Record<string, Partial<ExecResult>>
 
 describe('handleChanges', () => {
   it('returns parsed rows', async () => {
@@ -137,6 +148,77 @@ describe('handleLog', () => {
   it('rejects a non-number limit', async () => {
     const exec = scripted({})
     expect((await handleLog(depsWith(exec), { repoPath: '/repo', limit: 'ten' })).status).toBe(400)
+  })
+
+  it('forwards all/author/since/until into the walk', async () => {
+    const calls: string[][] = []
+    const exec: Exec = async (_file, args) => {
+      calls.push([...args])
+      return { code: 0, stdout: '', stderr: '' }
+    }
+    const since = Date.UTC(2026, 9, 1)
+    const result = await handleLog(depsWith(exec), {
+      repoPath: '/repo', all: true, author: 'Ann', since, until: Date.UTC(2026, 9, 27),
+    })
+    expect(result.status).toBe(200)
+    const logCall = calls.find(args => args[0] === 'log')
+    expect(logCall).toContain('--all')
+    expect(logCall).toContain('--author=Ann')
+    expect(logCall).toContain(`--since=${new Date(since).toISOString()}`)
+  })
+
+  it('rejects a blank or oversized author', async () => {
+    const exec = scripted({})
+    expect((await handleLog(depsWith(exec), { repoPath: '/repo', author: '  ' })).status).toBe(400)
+    expect((await handleLog(depsWith(exec), { repoPath: '/repo', author: 'a'.repeat(201) })).status).toBe(400)
+  })
+
+  it('rejects a non-timestamp window and an inverted one', async () => {
+    const exec = scripted({})
+    expect((await handleLog(depsWith(exec), { repoPath: '/repo', since: 0 })).status).toBe(400)
+    expect((await handleLog(depsWith(exec), { repoPath: '/repo', since: 'now' })).status).toBe(400)
+    expect((await handleLog(depsWith(exec), { repoPath: '/repo', since: 2, until: 1 })).status).toBe(400)
+  })
+})
+
+describe('handleCreateTag', () => {
+  it('tags the given commit and returns the resolved hash', async () => {
+    const calls: string[][] = []
+    const exec: Exec = async (_file, args) => {
+      calls.push([...args])
+      const entry = Object.entries(REPO_CALLS).find(([prefix]) => args.join(' ').startsWith(prefix))
+      if (entry !== undefined) return { code: 0, stdout: '', stderr: '', ...entry[1] }
+      if (args[0] === 'rev-list') return { code: 0, stdout: 'deadbeef\n', stderr: '' }
+      return { code: 0, stdout: '', stderr: '' }
+    }
+    const result = await handleCreateTag(depsWith(exec), { repoPath: '/repo', name: 'v1.0.0', target: 'abc123' })
+    expect(result).toMatchObject({ status: 200, body: { tag: 'v1.0.0', hash: 'deadbeef' } })
+    expect(calls.find(args => args[0] === 'tag')).toEqual(['tag', 'v1.0.0', 'abc123'])
+  })
+
+  it('rejects a flag-shaped name, a non-object-id target, and an oversize message', async () => {
+    const exec = scripted({})
+    expect((await handleCreateTag(depsWith(exec), { repoPath: '/repo', name: '  ' })).status).toBe(400)
+    expect((await handleCreateTag(depsWith(exec), { repoPath: '/repo', name: '-evil' })).status).toBe(400)
+    expect((await handleCreateTag(depsWith(exec), { repoPath: '/repo', name: 'v1', target: 'main' })).status).toBe(400)
+    expect((await handleCreateTag(depsWith(exec), { repoPath: '/repo', name: 'v1', message: 'x'.repeat(5001) })).status).toBe(400)
+    expect((await handleCreateTag(depsWith(exec), { repoPath: 'rel', name: 'v1' })).status).toBe(400)
+    expect((await handleCreateTag(depsWith(exec), { repoPath: '/repo', name: 'v1', extra: 1 })).status).toBe(400)
+  })
+
+  it('maps a duplicate tag refusal to 400 with git stderr', async () => {
+    const exec = scripted({
+      ...REPO_CALLS,
+      tag: { code: 128, stderr: 'fatal: tag already exists' },
+    })
+    const result = await handleCreateTag(depsWith(exec), { repoPath: '/repo', name: 'v1.0.0', target: 'abc123' })
+    expect(result).toMatchObject({ status: 400, body: { error: expect.stringContaining('tag already exists') } })
+  })
+
+  it('reports a non-repository path as 400', async () => {
+    const exec = scripted({ 'rev-parse --show-toplevel': { code: 128, stderr: 'fatal: not a git repository' } })
+    const result = await handleCreateTag(depsWith(exec), { repoPath: '/repo', name: 'v1' })
+    expect(result).toMatchObject({ status: 400, body: { error: expect.stringContaining('is not inside a git repository') } })
   })
 })
 

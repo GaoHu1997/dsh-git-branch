@@ -499,6 +499,39 @@ export async function createBranch(exec: Exec, cwd: string, name: string, from?:
   return name
 }
 
+/** Outcome of {@link createTag}: the tag created and the commit it points at. */
+export interface TagOutcome {
+  tag: string
+  hash: string
+}
+
+/**
+ * Create a tag at an existing commit (`git tag`). Tags are repository-wide
+ * refs, so the command runs at the repository root.
+ *
+ * A message makes it an ANNOTATED tag (`-a -m`) — the only shape that carries
+ * an author and date, and what `git describe` prefers; without one the tag is
+ * lightweight and is just an alias for the commit. Both are created locally
+ * only: pushing a tag is a deliberate, separate publish step that this panel
+ * does not perform on a menu click.
+ * @param exec - executor seam.
+ * @param repoRoot - main worktree directory.
+ * @param name - tag name (git validates; failures raise GitError).
+ * @param target - commit to tag; absent tags the repository's current HEAD.
+ * @param message - optional annotation message; non-empty = annotated tag.
+ * @returns the tag name and the commit hash it points at.
+ */
+export async function createTag(exec: Exec, repoRoot: string, name: string, target?: string, message?: string): Promise<TagOutcome> {
+  const text = message?.trim() ?? ''
+  const args = ['tag']
+  if (text !== '') args.push('-a', name, '-m', text)
+  else args.push(name)
+  if (target !== undefined && target !== '') args.push(target)
+  await git(exec, repoRoot, args)
+  const hash = (await git(exec, repoRoot, ['rev-list', '-n', '1', name])).trim()
+  return { tag: name, hash }
+}
+
 /**
  * Rename a LOCAL branch (`git branch -m`): branch refs are repository-wide,
  * so the command runs at the repository root and every worktree HEAD pointing
@@ -1015,18 +1048,35 @@ export interface CommitEntryRaw {
   refs: string[]
 }
 
+/** The extra log filters the history card's toolbar drives. */
+export interface LogFilter {
+  /** Every ref (local + remote branches, tags) instead of the checkout's
+   * HEAD — the history card's default view. Ignored when `ref` is given. */
+  all?: boolean
+  /** Committer-author substring/regex, forwarded as `--author=<value>`. */
+  author?: string
+  /** Lower/upper bound on the commit date, epoch milliseconds. */
+  since?: number
+  until?: number
+}
+
 /**
  * Paginated history of the queried checkout. `ref` is verified with
  * `rev-parse --verify` first, so an arbitrary string can never reach the log
  * arguments as anything but a resolvable rev. An unborn checkout (no commits
  * yet) answers an empty page instead of an error.
+ *
+ * `--topo-order` is unconditional: the history card draws lane lines from
+ * `parents`, and a pure date order would interleave a branch's commits
+ * before their merge base, leaving edges pointing at rows not yet painted.
  * @param exec - executor seam.
  * @param cwd - the checkout directory.
  * @param limit - page size (1..200, validated upstream).
  * @param skip - offset (>= 0, validated upstream).
  * @param ref - optional starting rev; absent = the checkout's HEAD.
+ * @param filter - optional all-refs/author/date window.
  */
-export async function logHistory(exec: Exec, cwd: string, limit: number, skip: number, ref?: string): Promise<CommitEntryRaw[]> {
+export async function logHistory(exec: Exec, cwd: string, limit: number, skip: number, ref?: string, filter?: LogFilter): Promise<CommitEntryRaw[]> {
   let start: string | undefined
   if (ref !== undefined && ref !== '' && ref !== 'HEAD') {
     const verified = await gitMaybe(exec, cwd, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`])
@@ -1035,10 +1085,21 @@ export async function logHistory(exec: Exec, cwd: string, limit: number, skip: n
     }
     start = verified.trim()
   }
+  // A ref narrows the walk to that ref's ancestry; `--all` is only the
+  // no-ref default. Combining them would list every branch under a
+  // "this branch" filter.
+  const all = filter?.all === true && start === undefined
+  const author = filter?.author?.trim() ?? ''
+  const since = filter?.since
+  const until = filter?.until
   try {
     const out = await git(exec, cwd, [
-      'log', `--max-count=${String(limit)}`, `--skip=${String(skip)}`,
+      'log', `--max-count=${String(limit)}`, `--skip=${String(skip)}`, '--topo-order',
       '--date=iso-strict', `--pretty=format:${LOG_FORMAT}`,
+      ...(all ? ['--all'] : []),
+      ...(author === '' ? [] : [`--author=${author}`]),
+      ...(since === undefined ? [] : [`--since=${new Date(since).toISOString()}`]),
+      ...(until === undefined ? [] : [`--until=${new Date(until).toISOString()}`]),
       ...(start === undefined ? [] : [start]),
     ])
     return parseLogOutput(out)

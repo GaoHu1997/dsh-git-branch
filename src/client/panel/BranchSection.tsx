@@ -28,12 +28,12 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { MouseEvent as ReactMouseEvent } from 'react'
-import { createPortal } from 'react-dom'
 import { Button, IconCheckOutlineRegular, IconChevronDownOutlineRegular, IconChevronRightOutlineRegular, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { BranchRow } from '../git-panel-data.ts'
 import { branchNameIssue } from '../../normalize.ts'
 import { branchGroupKeys, filterBranches, groupRemotes } from '../git-panel-data.ts'
 import type { GitPanelTranslator } from '../panel-types.ts'
+import { FloatMenu } from './FloatMenu.tsx'
 import css from '../GitHistoryPanel.module.css'
 
 /** One open branch menu: the row it belongs to and its viewport rect. */
@@ -79,38 +79,9 @@ function BranchFloatMenu(props: {
 }): JSX.Element | null {
   const { state, t, busy, onAction, onClose } = props
   const { branch } = state
-  const ref = useRef<HTMLDivElement | null>(null)
 
-  useEffect(() => {
-    const onPointerDown = (event: PointerEvent): void => {
-      if (ref.current !== null && !ref.current.contains(event.target as Node)) onClose()
-    }
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') onClose()
-    }
-    document.addEventListener('pointerdown', onPointerDown, true)
-    document.addEventListener('keydown', onKeyDown)
-    return () => {
-      document.removeEventListener('pointerdown', onPointerDown, true)
-      document.removeEventListener('keydown', onKeyDown)
-    }
-  }, [onClose])
-
-  useLayoutEffect(() => {
-    // Keep the menu inside the viewport: flip above the row when it would
-    // overflow the bottom, clamp the left edge.
-    const el = ref.current
-    if (el === null) return
-    const rect = el.getBoundingClientRect()
-    const left = Math.max(8, Math.min(state.rect.left, window.innerWidth - rect.width - 8))
-    let top = state.rect.top
-    if (top + rect.height > window.innerHeight - 8) top = Math.max(8, state.rect.top - rect.height - 8)
-    el.style.left = `${String(Math.round(left))}px`
-    el.style.top = `${String(Math.round(top))}px`
-  }, [state])
-
-  return createPortal(
-    <div ref={ref} className={`${css.menu} ${css.floatMenu}`} role="menu">
+  return (
+    <FloatMenu anchor={state.rect} onClose={onClose}>
       <div className={css.menuHead}>
         {t('panel.branches')} · <span className={css.menuHeadStrong}>{branch.name}</span>
         {branch.current ? ` · ${t('panel.branchCurrent')}` : ''}
@@ -136,8 +107,7 @@ function BranchFloatMenu(props: {
       <button type="button" role="menuitem" className={css.menuItem} disabled={busy} onClick={() => onAction('copy')}>
         {t('panel.branchCopy')}
       </button>
-    </div>,
-    document.body,
+    </FloatMenu>
   )
 }
 

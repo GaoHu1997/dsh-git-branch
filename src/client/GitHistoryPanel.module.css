@@ -889,13 +889,68 @@
   color: var(--dsw-alias-label-tertiary);
 }
 
+/* The head carries the title plus three filters (branch, author, time). The
+ * row wraps at narrow widths rather than squeezing the date inputs into
+ * unreadable slivers. */
+.historyFilters {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.filterSelect,
+.filterInput,
+.filterDate {
+  height: 26px;
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: 7px;
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 12px;
+  padding: 0 6px;
+  outline: none;
+}
+
+.filterSelect {
+  max-width: 150px;
+}
+
+.filterInput {
+  width: 120px;
+}
+
+.filterInput::placeholder {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.filterDate {
+  width: 122px;
+  color-scheme: light dark;
+}
+
+.filterDash {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+}
+
+.commitList {
+  /* Keep the history body gap between blocks, never between graph rows.
+   * A non-shrinking block also prevents a long history from compressing rows
+   * inside the card's scrolling flex body. */
+  flex: none;
+}
+
 .commitRow {
   position: relative;
   display: grid;
-  grid-template-columns: 22px minmax(0, 1fr) auto;
-  gap: 8px;
+  grid-template-columns: var(--graph-w, 22px) minmax(0, 1fr) auto;
+  column-gap: 8px;
   align-items: center;
-  padding: 6px 8px 6px 2px;
+  padding: 0 8px 0 2px;
   cursor: pointer;
   border-radius: 7px;
 }
@@ -912,49 +967,46 @@
   background: var(--dsw-alias-bg-layer-3);
 }
 
+/* The SVG fills the actual grid row, including the text cells' padding.
+ * Its paths scale vertically; the separate dot keeps a constant radius. */
 .commitGraph {
   position: relative;
   align-self: stretch;
-  min-height: 34px;
+  min-height: 44px;
 }
 
-.commitGraph::before {
-  content: "";
+.commitGraphSvg {
   position: absolute;
-  left: 10px;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  background: var(--dsw-alias-border-l2);
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  overflow: visible;
 }
 
-.commitRowFirst .commitGraph::before {
-  top: 50%;
-}
-
-.commitRowLast .commitGraph::before {
-  bottom: 50%;
-}
-
-/* A small plain dot on the rail — the old 10px dot with a fat card-colored
- * ring read as a heavy black blob. #4c6bf5 for the same reason actPrimary
- * hardcodes it (the brand token does not resolve reliably in this panel). */
 .commitDot {
   position: absolute;
-  left: 8px;
   top: 50%;
-  transform: translateY(-50%);
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
+  box-sizing: border-box;
+  border: 2px solid currentColor;
   border-radius: 50%;
-  background: #4c6bf5;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
 }
 
-.commitDotMerge {
-  background: #8350d8;
+.commitExpandGraph {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  display: block;
+  pointer-events: none;
 }
 
 .commitMain {
+  padding: 6px 0;
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -1028,9 +1080,17 @@
   gap: 6px;
   color: var(--dsw-alias-label-tertiary);
   font-size: 11.5px;
+  min-width: 0;
+}
+
+.commitAuthor {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .commitSide {
+  padding: 6px 0;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1039,13 +1099,23 @@
   flex: none;
 }
 
+/* The absolute stamp column: tabular figures so every row's digits line up
+ * under the one above, which is what makes the column scannable. */
+.commitDate {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .commitHash {
   font-family: ui-monospace, Consolas, monospace;
 }
 
 .commitExpand {
+  position: relative;
   grid-column: 1 / -1;
-  padding: 2px 4px 8px 28px;
+  /* Align the expanded file list with the subject column, whatever width the
+   * graph band needs in this repository. */
+  padding: 2px 4px 8px calc(var(--graph-w, 22px) + 8px);
   display: flex;
   flex-direction: column;
   gap: 2px;

@@ -17,11 +17,11 @@ import type {} from '@deepseek-ai/dsh-settings'
 import { childProcessExec } from './git.js'
 import { ACCEL_DEFAULT_URL, accelerateUrlError } from './normalize.js'
 import {
-  handleAiCommitMessage, handleChanges, handleCommit, handleCommitFiles, handleCreateBranch, handleCreateWorktree, handleDeleteBranch, handleEnsureDirectory, handleFetch, handleGroupWorktrees, handleInspectWorktree, handleLog, handlePathExists, handlePurgeDirectory, handleRemoveWorktree, handleRenameBranch, handleStage, handleStatus, handleSwitch, handleUpdate, handlePush, handleWorktreesAll,
+  handleAiCommitMessage, handleChanges, handleCommit, handleCommitFiles, handleCreateBranch, handleCreateTag, handleCreateWorktree, handleDeleteBranch, handleEnsureDirectory, handleFetch, handleGroupWorktrees, handleInspectWorktree, handleLog, handlePathExists, handlePurgeDirectory, handleRemoveWorktree, handleRenameBranch, handleStage, handleStatus, handleSwitch, handleUpdate, handlePush, handleWorktreesAll,
   type LlmStreamRuntime, type RouteDeps, type RouteOutcome,
 } from './routes.js'
 import { validateRootDir } from './settings.js'
-import { ROUTE_AI_COMMIT_MESSAGE, ROUTE_BRANCH, ROUTE_BRANCH_DELETE, ROUTE_BRANCH_RENAME, ROUTE_CHANGES, ROUTE_COMMIT, ROUTE_COMMIT_FILES, ROUTE_ENSURE_DIRECTORY, ROUTE_EXISTS, ROUTE_FETCH, ROUTE_GROUP, ROUTE_INSPECT, ROUTE_LOG, ROUTE_PUSH, ROUTE_PURGE, ROUTE_REMOVE, ROUTE_STAGE, ROUTE_STATUS, ROUTE_SWITCH, ROUTE_UPDATE, ROUTE_WORKTREE, ROUTE_WORKTREES_ALL } from './wire.js'
+import { ROUTE_AI_COMMIT_MESSAGE, ROUTE_BRANCH, ROUTE_BRANCH_DELETE, ROUTE_BRANCH_RENAME, ROUTE_CHANGES, ROUTE_COMMIT, ROUTE_COMMIT_FILES, ROUTE_ENSURE_DIRECTORY, ROUTE_EXISTS, ROUTE_FETCH, ROUTE_GROUP, ROUTE_INSPECT, ROUTE_LOG, ROUTE_PUSH, ROUTE_PURGE, ROUTE_REMOVE, ROUTE_STAGE, ROUTE_STATUS, ROUTE_SWITCH, ROUTE_TAG, ROUTE_UPDATE, ROUTE_WORKTREE, ROUTE_WORKTREES_ALL } from './wire.js'
 
 export const name = 'dsh-git-branch'
 
@@ -298,6 +298,7 @@ export function apply(ctx: Context, config: Config = {}): void {
     postRoute(ROUTE_COMMIT, 'commit', handleCommit)
     postRoute(ROUTE_LOG, 'log', handleLog)
     postRoute(ROUTE_COMMIT_FILES, 'commit-files', handleCommitFiles)
+    postRoute(ROUTE_TAG, 'tag', handleCreateTag)
 
     // The AI commit-message route exists only where the host tree provides
     // the dsh-llm service: the injection resolves once the service is up and

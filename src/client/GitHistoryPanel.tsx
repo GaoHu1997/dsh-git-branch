@@ -20,16 +20,16 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState, useSyncExternalStore } from 'react'
 import { IconRefreshOutlineRegular, Toast } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { CommitEntry, CommitFileEntry, RepoStatus, WorktreeChange } from '../wire.ts'
-import { fetchStatus, requestAiCommitMessage, requestChanges, requestCommit, requestCommitFiles, requestCreateBranch, requestDeleteBranch, requestFetch, requestLog, requestPush, requestRenameBranch, requestStage, requestSwitch, requestUpdate } from './api.ts'
+import { fetchStatus, requestAiCommitMessage, requestChanges, requestCommit, requestCommitFiles, requestCreateBranch, requestCreateTag, requestDeleteBranch, requestFetch, requestLog, requestPush, requestRenameBranch, requestStage, requestSwitch, requestUpdate } from './api.ts'
 import { emitGitMutated, onGitMutated } from './git-events.ts'
-import { appendPage, buildBranchRows, groupChanges, type BranchRow, type ChangeRow } from './git-panel-data.ts'
+import { appendPage, buildBranchRows, groupChanges, historyQueryFor, type BranchRow, type ChangeRow, type HistoryFilters } from './git-panel-data.ts'
+import { EMPTY_HISTORY_FILTERS } from './git-panel-data.ts'
 import type { GitPanelTranslator, PanelHostContext, SessionModelSelection, SidebarTabScope } from './panel-types.ts'
 import type { AccelFace } from './accel-form.ts'
 import { BranchSection } from './panel/BranchSection.tsx'
 import { CnAcceleratePopover } from './panel/CnAcceleratePopover.tsx'
 import { HistorySection, type CommitFilesState } from './panel/HistorySection.tsx'
 import { UncommittedSection } from './panel/UncommittedSection.tsx'
-import { timeLabel } from './relative-time.ts'
 import css from './GitHistoryPanel.module.css'
 
 /** Tab content props: what the registration's component call hands over.
@@ -40,6 +40,10 @@ export type GitPanelTabProps = {
   t: GitPanelTranslator
   accel: AccelFace
 }
+
+/** One history page. Kept next to the loader: `hasMore` is decided by
+ * comparing the returned length against it. */
+const HISTORY_PAGE = 50
 
 /** One git failure → its message text (the git stderr rides error.message). */
 function failureText(error: unknown): string {
@@ -87,20 +91,26 @@ const GitHistoryPanelData = forwardRef<GitHistoryPanelDataHandle, {
   const [commitMenuOpen, setCommitMenuOpen] = useState(false)
   const [commitDraft, setCommitDraft] = useState('')
   const [aiBusy, setAiBusy] = useState(false)
+  /** The history card's filters. They live HERE, not in the section, because
+   * they are request parameters: the section renders them and hands every
+   * change up, and the loader below re-walks the log with them. */
+  const [historyFilters, setHistoryFilters] = useState<HistoryFilters>(EMPTY_HISTORY_FILTERS)
 
   /** Response-sequence guard: a refresh raced against a mutation or a cwd
    * change must never land an older snapshot over a newer one. */
   const seqRef = useRef(0)
 
   const loadHistoryPage = useCallback(async (skip: number): Promise<{ commits: CommitEntry[]; complete: boolean } | undefined> => {
-    const result = await requestLog(cwd, 50, skip)
+    // Filters are resolved against the wall clock HERE, per request: a
+    // "last 24 hours" window must not freeze at the moment the panel opened.
+    const result = await requestLog(cwd, historyQueryFor(historyFilters, Date.now(), HISTORY_PAGE, skip))
     if (!result.ok) {
       setHistoryError(result.error)
       return undefined
     }
     setHistoryError(undefined)
-    return { commits: result.commits, complete: result.commits.length < 50 }
-  }, [cwd])
+    return { commits: result.commits, complete: result.commits.length < HISTORY_PAGE }
+  }, [cwd, historyFilters])
 
   const loadAll = useCallback(async (): Promise<void> => {
     const seq = seqRef.current + 1
@@ -362,6 +372,18 @@ const GitHistoryPanelData = forwardRef<GitHistoryPanelDataHandle, {
     })
   }, [cwd, loadAll, pushToast, runGuarded, t])
 
+  /** Tag one commit. Runs against the repository (a tag is a repository-wide
+   * ref), so the history card can tag a commit that no checkout has. Only
+   * local: pushing tags is a release step, not a side effect of a right-click. */
+  const onCreateTag = useCallback((name: string, target: string, message: string): void => {
+    void runGuarded(async () => {
+      const result = await requestCreateTag(cwd, name, target, message)
+      if (!result.ok) throw new Error(result.error)
+      pushToast(t('panel.tagDone', { tag: result.tag }), 'success')
+      await loadAll()
+    })
+  }, [cwd, loadAll, pushToast, runGuarded, t])
+
   const onToggleCommit = useCallback((hash: string): void => {
     if (expanded === hash) {
       setExpanded(null)
@@ -401,7 +423,13 @@ const GitHistoryPanelData = forwardRef<GitHistoryPanelDataHandle, {
     })()
   }, [commits.length, loadHistoryPage, loadingMore])
 
-  const timeLabelFor = useCallback((date: number): string => timeLabel(date, Date.now(), t), [t])
+  const onHistoryFilters = useCallback((next: HistoryFilters): void => {
+    // Setting the filters re-creates `loadHistoryPage`, which re-runs
+    // `loadAll` through its effect — so the new window walks from page 0 and
+    // any in-flight page is dropped by the sequence guard.
+    setHistoryFilters(next)
+    setExpanded(null)
+  }, [])
 
   if (statusError !== undefined && repo === null) {
     return (
@@ -479,9 +507,15 @@ const GitHistoryPanelData = forwardRef<GitHistoryPanelDataHandle, {
         loadingMore={loadingMore}
         expanded={expanded}
         filesByHash={filesByHash}
+        filters={historyFilters}
+        branches={rows.locals.map(row => row.name)}
+        busy={sectionBusy}
         onLoadMore={onLoadMore}
         onToggle={onToggleCommit}
-        timeLabelFor={timeLabelFor}
+        onFilters={onHistoryFilters}
+        onCreateBranch={onCreate}
+        onCreateTag={onCreateTag}
+        pushToast={pushToast}
       />
     </div>
   )

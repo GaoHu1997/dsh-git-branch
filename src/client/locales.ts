@@ -180,6 +180,23 @@ export type GitWorktreeKey =
   | 'panel.createDone'
   | 'panel.history'
   | 'panel.historySearch'
+  | 'panel.historyBranch'
+  | 'panel.historyAllRefs'
+  | 'panel.historyAuthor'
+  | 'panel.historyTime'
+  | 'panel.rangeAll'
+  | 'panel.rangeDay'
+  | 'panel.rangeWeek'
+  | 'panel.rangeCustom'
+  | 'panel.rangeSince'
+  | 'panel.rangeUntil'
+  | 'panel.commitCopyHash'
+  | 'panel.commitCopySubject'
+  | 'panel.branchTag'
+  | 'panel.tagTitle'
+  | 'panel.tagName'
+  | 'panel.tagMessage'
+  | 'panel.tagDone'
   | 'panel.noCommits'
   | 'panel.noMatches'
   | 'panel.loadMore'
@@ -381,6 +398,23 @@ export const en: Record<GitWorktreeKey, string> = {
   'panel.createDone': 'Created branch {branch}',
   'panel.history': 'Commit history',
   'panel.historySearch': 'Search commits / authors',
+  'panel.historyBranch': 'Branch',
+  'panel.historyAllRefs': 'All branches',
+  'panel.historyAuthor': 'Author',
+  'panel.historyTime': 'Time',
+  'panel.rangeAll': 'All time',
+  'panel.rangeDay': 'Last 24 hours',
+  'panel.rangeWeek': 'Last 7 days',
+  'panel.rangeCustom': 'Custom range',
+  'panel.rangeSince': 'From',
+  'panel.rangeUntil': 'To',
+  'panel.commitCopyHash': 'Copy hash',
+  'panel.commitCopySubject': 'Copy message',
+  'panel.branchTag': 'Tag this commit…',
+  'panel.tagTitle': 'New tag at {branch}',
+  'panel.tagName': 'Tag name',
+  'panel.tagMessage': 'Message (optional)',
+  'panel.tagDone': 'Tagged {tag}',
   'panel.noCommits': 'This repository has no commits yet',
   'panel.noMatches': 'No matching commits',
   'panel.loadMore': 'Load more',
@@ -583,6 +617,23 @@ export const zh: Record<GitWorktreeKey, string> = {
   'panel.createDone': '已创建分支 {branch}',
   'panel.history': '提交历史',
   'panel.historySearch': '搜索提交 / 作者',
+  'panel.historyBranch': '分支',
+  'panel.historyAllRefs': '所有分支',
+  'panel.historyAuthor': '提交人',
+  'panel.historyTime': '时间',
+  'panel.rangeAll': '全部',
+  'panel.rangeDay': '近 24 小时',
+  'panel.rangeWeek': '近 7 天',
+  'panel.rangeCustom': '自定义范围',
+  'panel.rangeSince': '从',
+  'panel.rangeUntil': '到',
+  'panel.commitCopyHash': '复制哈希',
+  'panel.commitCopySubject': '复制消息',
+  'panel.branchTag': '添加标签…',
+  'panel.tagTitle': '在 {branch} 上新标签',
+  'panel.tagName': '标签名称',
+  'panel.tagMessage': '消息（可选）',
+  'panel.tagDone': '已标记 {tag}',
   'panel.noCommits': '仓库还没有提交',
   'panel.noMatches': '没有匹配的提交',
   'panel.loadMore': '加载更多',

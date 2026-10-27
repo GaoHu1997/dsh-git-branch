@@ -6,12 +6,12 @@
 import { basename, dirname, join, resolve } from 'node:path'
 import { mkdir, readdir, rm, stat } from 'node:fs/promises'
 import { runPostCreateCopy, type CopyFilesSeams } from './copy-files.js'
-import { appendWorktreeExclude, fsExcludeSeams, GitError, addWorktree, addWorktreeCutout, collectAiDiff, commitFiles, commitIndex, createBranch, cutoutBranchName, deleteBranch, fetchAll, fsDirExists, inspectWorktree, isAbsoluteDir, isStageablePath, logHistory, probeRepo, probeWorkspaceGit, removeWorktree, renameBranch, resolveBranch, pushBranch, stagePaths, switchBranch, updateBranch, workingChanges, type DirExists, type ExcludeSeams, type Exec } from './git.js'
+import { appendWorktreeExclude, fsExcludeSeams, GitError, addWorktree, addWorktreeCutout, collectAiDiff, commitFiles, commitIndex, createBranch, createTag, cutoutBranchName, deleteBranch, fetchAll, fsDirExists, inspectWorktree, isAbsoluteDir, isStageablePath, logHistory, probeRepo, probeWorkspaceGit, removeWorktree, renameBranch, resolveBranch, pushBranch, stagePaths, switchBranch, updateBranch, workingChanges, type DirExists, type ExcludeSeams, type Exec } from './git.js'
 import { ACCEL_DEFAULT_URL, accelerateUrlError, isAbsoluteConfigPath, normalizeAccelerateUrl, sanitizeBranchDir } from './normalize.js'
 import { resolveRootDir } from './settings.js'
 import { COMMIT_MESSAGE_LIMIT } from './wire.js'
 import type {
-  AiCommitMessageBody, AiCommitMessageResult, ChangesBody, ChangesResult, CommitBody, CommitFilesBody, CommitFilesResult, CommitResult, CreateBranchBody, CreateBranchResult, CreateWorktreeBody, CreateWorktreeResult, DeleteBranchBody, DeleteBranchResult, EnsureDirectoryBody, EnsureDirectoryResult, FetchBody, FetchResult, GroupWorkspacesResult, InspectWorktreeBody, InspectWorktreeResult, LogBody, LogResult, PathExistsResult, PurgeDirectoryBody, PurgeDirectoryResult, RemoveWorktreeBody, RemoveWorktreeResult, RenameBranchBody, RenameBranchResult, RepoStatus, RouteError, StageBody, StageResult, SwitchBody, SwitchResult, UpdateBody, UpdateResult, PushBody, PushResult, WorktreesAllResult,
+  AiCommitMessageBody, AiCommitMessageResult, ChangesBody, ChangesResult, CommitBody, CommitFilesBody, CommitFilesResult, CommitResult, CreateBranchBody, CreateBranchResult, CreateTagBody, CreateTagResult, CreateWorktreeBody, CreateWorktreeResult, DeleteBranchBody, DeleteBranchResult, EnsureDirectoryBody, EnsureDirectoryResult, FetchBody, FetchResult, GroupWorkspacesResult, InspectWorktreeBody, InspectWorktreeResult, LogBody, LogResult, PathExistsResult, PurgeDirectoryBody, PurgeDirectoryResult, RemoveWorktreeBody, RemoveWorktreeResult, RenameBranchBody, RenameBranchResult, RepoStatus, RouteError, StageBody, StageResult, SwitchBody, SwitchResult, UpdateBody, UpdateResult, PushBody, PushResult, WorktreesAllResult,
 } from './wire.js'
 
 /** Everything the handlers need from the host half. */
@@ -79,7 +79,7 @@ export async function fsMkdirRecursive(path: string): Promise<void> {
 /** One route outcome: HTTP status plus the JSON body. */
 export interface RouteOutcome {
   status: number
-  body: RepoStatus | CreateWorktreeResult | SwitchResult | CreateBranchResult | FetchResult | UpdateResult | GroupWorkspacesResult | InspectWorktreeResult | RemoveWorktreeResult | PathExistsResult | EnsureDirectoryResult | WorktreesAllResult | PurgeDirectoryResult | ChangesResult | StageResult | CommitResult | LogResult | CommitFilesResult | AiCommitMessageResult | RouteError
+  body: RepoStatus | CreateWorktreeResult | SwitchResult | CreateBranchResult | FetchResult | UpdateResult | GroupWorkspacesResult | InspectWorktreeResult | RemoveWorktreeResult | PathExistsResult | EnsureDirectoryResult | WorktreesAllResult | PurgeDirectoryResult | ChangesResult | StageResult | CommitResult | LogResult | CommitFilesResult | CreateTagResult | AiCommitMessageResult | RouteError
 }
 
 /** Uniform failure envelope. */
@@ -985,15 +985,25 @@ export async function handleCommit(deps: RouteDeps, body: unknown): Promise<Rout
 export const LOG_LIMIT_DEFAULT = 50
 export const LOG_LIMIT_MAX = 200
 
+/** Bound for the author filter and the tag annotation (characters). */
+const LOG_AUTHOR_LIMIT = 200
+const TAG_MESSAGE_LIMIT = 5000
+
 /**
  * POST /log — one page of the queried checkout's history. The optional `ref`
  * is verified server-side (`rev-parse --verify`), an unborn checkout answers
  * an empty page, and everything else surfaces git's own stderr.
+ *
+ * `all` walks every ref instead of HEAD (the history card's default view: one
+ * graph holding all branches, tags, and their merge edges). `author` and the
+ * `since`/`until` window are pushed down to git rather than filtered in the
+ * browser — the card paginates, so a client-side filter would only narrow the
+ * page it already has and silently hide matches on later pages.
  * @param deps - host dependencies.
- * @param body - parsed request body: `{ repoPath, limit?, skip?, ref? }`.
+ * @param body - parsed request body: `{ repoPath, limit?, skip?, ref?, all?, author?, since?, until? }`.
  */
 export async function handleLog(deps: RouteDeps, body: unknown): Promise<RouteOutcome> {
-  const parsed = readBody<LogBody>(body, ['repoPath'], [], ['ref'], ['limit', 'skip'])
+  const parsed = readBody<LogBody>(body, ['repoPath'], ['all'], ['ref', 'author'], ['limit', 'skip', 'since', 'until'])
   if (isOutcome(parsed)) return parsed
   const repoPath = readRepoPath(parsed)
   if (typeof repoPath !== 'string') return repoPath
@@ -1007,11 +1017,69 @@ export async function handleLog(deps: RouteDeps, body: unknown): Promise<RouteOu
   if (ref !== undefined && (ref.trim() === '' || ref.length > 300 || ref.startsWith('-'))) {
     return fail(400, '"ref" must be a non-empty revision name')
   }
+  const author = parsed.author
+  if (author !== undefined && (author.trim() === '' || author.length > LOG_AUTHOR_LIMIT)) {
+    return fail(400, `"author" must be a non-empty string of at most ${String(LOG_AUTHOR_LIMIT)} characters`)
+  }
+  const since = parsed.since
+  const until = parsed.until
+  for (const [key, value] of [['since', since], ['until', until]] as const) {
+    if (value !== undefined && (!Number.isFinite(value) || value <= 0)) {
+      return fail(400, `"${key}" must be a positive epoch-millisecond timestamp`)
+    }
+  }
+  if (since !== undefined && until !== undefined && until < since) {
+    return fail(400, '"until" must not be earlier than "since"')
+  }
   try {
-    const commits = await logHistory(deps.exec, repoPath, limit, skip, ref)
+    const commits = await logHistory(deps.exec, repoPath, limit, skip, ref, {
+      all: parsed.all === true,
+      ...(author === undefined ? {} : { author }),
+      ...(since === undefined ? {} : { since }),
+      ...(until === undefined ? {} : { until }),
+    })
     return { status: 200, body: { commits } }
   } catch (error) {
     return checkoutFailure(error)
+  }
+}
+
+/**
+ * POST /tag — create a tag at an existing commit of the queried repository.
+ * The target is restricted to a commit hash (the only shape the history card
+ * sends), so an arbitrary string can never reach `git tag` as a flag; git
+ * validates the tag name itself and a duplicate surfaces as 400.
+ * @param deps - host dependencies.
+ * @param body - parsed request body: `{ repoPath, name, target?, message? }`.
+ */
+export async function handleCreateTag(deps: RouteDeps, body: unknown): Promise<RouteOutcome> {
+  const parsed = readBody<CreateTagBody>(body, ['repoPath', 'name'], [], ['target', 'message'])
+  if (isOutcome(parsed)) return parsed
+  const { repoPath, name, target, message } = parsed
+  if (!isAbsoluteDir(repoPath)) return fail(400, '"repoPath" must be an absolute directory')
+  if (name.trim() === '') return fail(400, '"name" must be non-empty')
+  // A leading dash would ride `git tag` as a flag — reject before the exec.
+  if (name.startsWith('-')) return fail(400, '"name" must not start with "-"')
+  if (name.length > 300) return fail(400, '"name" must be at most 300 characters')
+  // The target lands on `git tag <name> <target>` verbatim: restrict it to the
+  // object id shape the history card sends rather than trusting a free string.
+  if (target !== undefined && !/^[0-9a-fA-F]{4,64}$/.test(target)) {
+    return fail(400, '"target" must be a git object id')
+  }
+  if (message !== undefined && message.length > TAG_MESSAGE_LIMIT) {
+    return fail(400, `"message" must be at most ${String(TAG_MESSAGE_LIMIT)} characters`)
+  }
+  try {
+    const facts = await probeRepo(deps.exec, repoPath, deps.dirExists)
+    if (facts === undefined) return fail(400, `"${repoPath}" is not inside a git repository`)
+    // Tag refs are repository-wide metadata and touch no checkout, so the
+    // command runs at the repository root — the same scope as a branch rename.
+    const result = await createTag(deps.exec, facts.repoRoot, name, target, message)
+    const body: CreateTagResult = result
+    return { status: 200, body }
+  } catch (error) {
+    if (error instanceof GitError) return gitFailure(error)
+    return fail(500, error instanceof Error ? error.message : String(error))
   }
 }
 

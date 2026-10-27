@@ -76,6 +76,9 @@ export const ROUTE_LOG = `${ROUTE_PREFIX}/log`
 /** POST ROUTE_PREFIX/commit-files — the files one commit changed. */
 export const ROUTE_COMMIT_FILES = `${ROUTE_PREFIX}/commit-files`
 
+/** POST ROUTE_PREFIX/tag — create a tag at an existing commit. */
+export const ROUTE_TAG = `${ROUTE_PREFIX}/tag`
+
 /** POST ROUTE_PREFIX/ai-commit-message — one-shot LLM commit message from
  * the staged diff (mounted only where the host provides the llm service). */
 export const ROUTE_AI_COMMIT_MESSAGE = `${ROUTE_PREFIX}/ai-commit-message`
@@ -542,11 +545,42 @@ export interface LogBody {
   skip?: number
   /** Optional starting ref (a branch name, `HEAD`, …); validated server-side. */
   ref?: string
+  /** Walk every ref (branches + tags) instead of the checkout's HEAD — the
+   * history card's default view, which is what makes branches/merges visible.
+   * Ignored when `ref` is given. */
+  all?: boolean
+  /** Committer-author substring/regex (`--author`); absent = every author. */
+  author?: string
+  /** Lower bound on the commit date, epoch milliseconds (`--since`). */
+  since?: number
+  /** Upper bound on the commit date, epoch milliseconds (`--until`). */
+  until?: number
 }
 
 /** POST log response body. */
 export interface LogResult {
   commits: CommitEntry[]
+}
+
+/** POST tag request body. */
+export interface CreateTagBody {
+  /** Any directory inside the repository (tag refs are repository-wide). */
+  repoPath: string
+  /** User-typed tag name, verbatim (git validates it). */
+  name: string
+  /** The commit to tag (a full or abbreviated hash, validated server-side);
+   * absent tags the repository's current HEAD. */
+  target?: string
+  /** Optional annotation message; non-empty creates an ANNOTATED tag. */
+  message?: string
+}
+
+/** POST tag response body. */
+export interface CreateTagResult {
+  /** The tag created. */
+  tag: string
+  /** The commit hash the tag points at. */
+  hash: string
 }
 
 /** One file row of POST commit-files. */

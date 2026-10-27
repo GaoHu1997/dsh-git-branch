@@ -35,3 +35,4 @@
 - [0016 — 分支卡片标题栏加分支搜索框、去掉标题栏分支数量](0016-branch-card-search-box.md)
 - [0017 — 发布 v1.0.4 补丁版本](0017-release-v1.0.4.md)
 - [0018 — Git 管理面板加「国内加速」按钮（加速前缀 URL 重写）](0018-cn-accelerate-mirror-prefix.md)
+- [0019 — 提交历史图、筛选与右键操作（含行间连线几何修复）](0019-git-history-graph-panel.md)

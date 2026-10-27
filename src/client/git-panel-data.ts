@@ -6,6 +6,7 @@
  */
 
 import type { CommitEntry, WorktreeChange } from '../wire.ts'
+import type { HistoryQuery } from './api.ts'
 
 /** One classified ref of a commit, driving the badge color. */
 export interface CommitRefBadge {
@@ -89,6 +90,141 @@ export function filterCommits(commits: readonly CommitEntry[], query: string): C
   if (needle === '') return [...commits]
   return commits.filter(commit =>
     commit.subject.toLowerCase().includes(needle) || commit.authorName.toLowerCase().includes(needle))
+}
+
+/** The time windows the history card's 时间 picker offers. */
+export type HistoryRange = 'all' | 'day' | 'week' | 'custom'
+
+/** One resolved time window: `since`/`until` in epoch ms, both optional. */
+export interface HistoryRangeBound {
+  readonly since?: number
+  readonly until?: number
+}
+
+/** Day and week windows, in ms (7 days, not a calendar week). */
+const DAY_MS = 24 * 60 * 60 * 1000
+const WEEK_MS = 7 * DAY_MS
+
+/**
+ * Turn the picker's choice into the `since`/`until` bounds the history call
+ * ships. `day`/`week` are relative to `now` — resolved per request, so a
+ * panel left open an hour does not keep asking for the window it opened
+ * with. `custom` carries the two bounds the date inputs produced (either may
+ * be absent, meaning "open on that side").
+ */
+export function historyRangeBound(
+  range: HistoryRange,
+  now: number,
+  custom: { readonly since?: number; readonly until?: number } = {},
+): HistoryRangeBound {
+  if (range === 'day') return { since: now - DAY_MS }
+  if (range === 'week') return { since: now - WEEK_MS }
+  if (range === 'custom') {
+    return {
+      ...(custom.since === undefined ? {} : { since: custom.since }),
+      ...(custom.until === undefined ? {} : { until: custom.until }),
+    }
+  }
+  return {}
+}
+
+/** The history card's whole filter state, as the UI holds it. The date
+ * fields stay `<input type="date">` strings ('YYYY-MM-DD' or '') so the
+ * component never has to round-trip epoch ms through a text box. */
+export interface HistoryFilters {
+  /** Branch name to pin, or '' for every ref in the repository. */
+  readonly branch: string
+  /** Author needle, or ''. */
+  readonly author: string
+  readonly range: HistoryRange
+  /** Custom window's first day, 'YYYY-MM-DD' or ''. */
+  readonly customSince: string
+  /** Custom window's last day, 'YYYY-MM-DD' or ''. */
+  readonly customUntil: string
+}
+
+/** No filter: every ref, every author, every date. */
+export const EMPTY_HISTORY_FILTERS: HistoryFilters = {
+  branch: '',
+  author: '',
+  range: 'all',
+  customSince: '',
+  customUntil: '',
+}
+
+/** 'YYYY-MM-DD' as a date input emits it. */
+const DAY_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/
+
+/** Midnight of a 'YYYY-MM-DD' day in the BROWSER's zone, or undefined. Read
+ * field by field on purpose: `new Date('2026-10-15')` is parsed as UTC
+ * midnight, which is the previous day west of Greenwich — a custom window
+ * would then start a day early for half the world. */
+export function parseDayStart(value: string): number | undefined {
+  const match = DAY_PATTERN.exec(value.trim())
+  if (match === null) return undefined
+  const [, year, month, day] = match
+  const date = new Date(Number(year), Number(month) - 1, Number(day))
+  return Number.isFinite(date.getTime()) ? date.getTime() : undefined
+}
+
+/** Last millisecond of a 'YYYY-MM-DD' day in the browser's zone, or undefined.
+ * The end is inclusive: a custom window ending today must cover commits made
+ * earlier today. */
+export function parseDayEnd(value: string): number | undefined {
+  const start = parseDayStart(value)
+  return start === undefined ? undefined : start + DAY_MS - 1
+}
+
+/** The window the filters currently describe, relative to `now`. */
+export function historyFilterBound(filters: HistoryFilters, now: number): HistoryRangeBound {
+  if (filters.range !== 'custom') return historyRangeBound(filters.range, now)
+  const since = parseDayStart(filters.customSince)
+  const until = parseDayEnd(filters.customUntil)
+  return {
+    ...(since === undefined ? {} : { since }),
+    ...(until === undefined ? {} : { until }),
+  }
+}
+
+/**
+ * The history request for one filter state. A chosen branch pins `ref` (and
+ * cancels `all`, which would otherwise widen the walk to every ref); leaving
+ * it blank asks for `all` — the card is meant to show the whole repository,
+ * not just the checked-out branch, and merge edges only exist when the
+ * branches on both sides of a merge are in the page.
+ */
+export function buildHistoryQuery(state: {
+  readonly branch: string
+  readonly author: string
+  readonly now: number
+  readonly bound: HistoryRangeBound
+}): HistoryQuery {
+  const author = state.author.trim()
+  const base: HistoryQuery = {
+    ...(author === '' ? {} : { author }),
+    ...state.bound,
+  }
+  if (state.branch !== '') return { ...base, ref: state.branch }
+  return { ...base, all: true }
+}
+
+/** The full paged request for one filter state, resolved against `now`. */
+export function historyQueryFor(
+  filters: HistoryFilters,
+  now: number,
+  limit: number,
+  skip: number,
+): HistoryQuery {
+  return {
+    ...buildHistoryQuery({
+      branch: filters.branch,
+      author: filters.author,
+      now,
+      bound: historyFilterBound(filters, now),
+    }),
+    limit,
+    skip,
+  }
 }
 
 /**
