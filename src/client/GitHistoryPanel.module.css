@@ -1353,14 +1353,6 @@
   margin-top: 10px;
 }
 
-/* Cancel is a bare text action: no stroke, no fill, so it reads as the
- * quieter of the two rather than as a second control of equal weight. */
-.credCancel {
-  border: none;
-  background: transparent;
-  box-shadow: none;
-}
-
 .credTop {
   display: flex;
   align-items: flex-start;
