@@ -99,6 +99,12 @@ export function CredentialModal(props: CredentialModalProps): JSX.Element {
     setEditorOpen(true)
   }, [applyEditor])
 
+  /** Cancel closes the form only; the modal keeps the list it was opened for. */
+  const closeEditor = useCallback((): void => {
+    applyEditor(undefined)
+    setEditorOpen(false)
+  }, [applyEditor])
+
   // Presets fill the host and, when that host is already stored, switch the
   // editor into "edit" mode so the username and method arrive prefilled.
   const applyPreset = useCallback(
@@ -185,7 +191,7 @@ export function CredentialModal(props: CredentialModalProps): JSX.Element {
       onClose={onClose}
       title={t('cred.title')}
       closeLabel={t('cred.cancel')}
-      footer={<Button size="sm" variant="ghost" onClick={onClose}>{t('cancel')}</Button>}
+      footer={<Button size="sm" variant="ghost" onClick={onClose}>{t('close')}</Button>}
     >
       <div className={css.credTop}>
         <p className={css.credHint}>{t('cred.hint')}</p>
@@ -329,14 +335,15 @@ export function CredentialModal(props: CredentialModalProps): JSX.Element {
               </div>
               <div className={css.formError}>{formError ?? ''}</div>
             </div>
+            <div className={css.credFooter}>
+              <Button size="sm" variant="ghost" onClick={closeEditor}>{t('cancel')}</Button>
+              <Button size="sm" variant="primary" disabled={busy} onClick={() => void save()}>
+                {busy ? t('cred.saving') : t('cred.save')}
+              </Button>
+            </div>
           </>
         )
         : null}
-      <div className={css.credFooter}>
-        <Button size="sm" variant="primary" disabled={busy} onClick={() => void save()}>
-          {busy ? t('cred.saving') : t('cred.save')}
-        </Button>
-      </div>
     </Modal>
   )
 }

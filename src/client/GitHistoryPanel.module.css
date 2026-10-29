@@ -1343,9 +1343,12 @@
   text-decoration: underline;
 }
 
+/* The editor's action row: cancel on the left, save on the right, only while
+ * the form itself is open. */
 .credFooter {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
+  align-items: center;
   gap: 6px;
   margin-top: 10px;
 }
