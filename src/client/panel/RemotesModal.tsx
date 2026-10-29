@@ -12,6 +12,11 @@
  * Names are immutable here: `git remote rename` also rewrites tracking
  * config, which this panel does not offer; the URL is the mutable part.
  *
+ * The dialog follows the credential editor's interaction shape, so the two
+ * modals read as one design: the list is the default view, a 「+」 in the
+ * header row opens the editor, and the row's edit button re-opens it
+ * prefilled. Cancel closes the editor only — the modal itself stays open.
+ *
  * @module git-worktree/client/panel/RemotesModal
  */
 
@@ -47,6 +52,11 @@ export function RemotesModal(props: RemotesModalProps): JSX.Element {
   const [busy, setBusy] = useState(false)
   /** Two-step remove: the first click only arms the row. */
   const [confirmName, setConfirmName] = useState<string | undefined>()
+  /** The editor starts collapsed; the 「+」 in the header row opens it, and
+   * the row's 修改地址 button re-opens it prefilled. Keeping the form out of
+   * the DOM until it is asked for leaves the list as the modal's default —
+   * the same shape the credential editor uses. */
+  const [editorOpen, setEditorOpen] = useState(false)
 
   const load = useCallback(async (): Promise<void> => {
     const result = await requestRemotes(repoPath)
@@ -70,7 +80,14 @@ export function RemotesModal(props: RemotesModalProps): JSX.Element {
     setUrl('')
     setFormError(undefined)
     setConfirmName(undefined)
+    setEditorOpen(false)
   }, [])
+
+  /** The 「+」 button: a fresh, empty editor for a new remote. */
+  const openNew = useCallback((): void => {
+    resetEditor()
+    setEditorOpen(true)
+  }, [resetEditor])
 
   const startEdit = useCallback((entry: RemoteEntry): void => {
     setEditing(entry.name)
@@ -78,6 +95,7 @@ export function RemotesModal(props: RemotesModalProps): JSX.Element {
     setUrl(entry.fetchUrl)
     setFormError(undefined)
     setConfirmName(undefined)
+    setEditorOpen(true)
   }, [])
 
   const submit = useCallback(async (): Promise<void> => {
@@ -136,9 +154,21 @@ export function RemotesModal(props: RemotesModalProps): JSX.Element {
       onClose={onClose}
       title={t('remotes.title')}
       closeLabel={t('remotes.cancel')}
-      footer={<Button size="sm" variant="ghost" onClick={onClose}>{t('cancel')}</Button>}
+      footer={<Button size="sm" variant="ghost" onClick={onClose}>{t('close')}</Button>}
     >
-      <p className={css.credHint}>{t('remotes.hint')}</p>
+      <div className={css.credTop}>
+        <p className={css.credHint}>{t('remotes.hint')}</p>
+        <button
+          type="button"
+          className={css.credAdd}
+          title={t('remotes.add')}
+          aria-label={t('remotes.add')}
+          aria-expanded={editorOpen}
+          onClick={openNew}
+        >
+          <span aria-hidden="true">+</span>
+        </button>
+      </div>
       {loadError !== undefined ? <div className={css.formError}>{loadError}</div> : null}
       {loaded && loadError === undefined && remotes.length === 0
         ? <p className={css.empty}>{t('remotes.empty')}</p>
@@ -172,46 +202,52 @@ export function RemotesModal(props: RemotesModalProps): JSX.Element {
           </div>
         )
         : null}
-      <div className={css.credDivider} />
-      <div className={css.credFormTitle}>{editorTitle}</div>
-      <div className={css.credForm}>
-        <div className={css.formField}>
-          <label className={css.formLabel} htmlFor="git-remote-name">{t('remotes.nameLabel')}</label>
-          <input
-            id="git-remote-name"
-            className={css.formInput}
-            value={name}
-            placeholder={t('remotes.namePlaceholder')}
-            readOnly={editing !== undefined}
-            data-modal-autofocus={editing === undefined ? true : undefined}
-            onChange={event => setName(event.target.value)}
-          />
-        </div>
-        <div className={css.formField}>
-          <label className={css.formLabel} htmlFor="git-remote-url">{t('remotes.urlLabel')}</label>
-          <input
-            id="git-remote-url"
-            className={css.formInput}
-            value={url}
-            placeholder={t('remotes.urlPlaceholder')}
-            onChange={event => setUrl(event.target.value)}
-            onKeyDown={event => {
-              if (event.key !== 'Enter') return
-              event.preventDefault()
-              void submit()
-            }}
-          />
-        </div>
-        <div className={css.formError}>{formError ?? ''}</div>
-      </div>
-      <div className={css.credFooter}>
-        {editing !== undefined
-          ? <Button size="sm" variant="ghost" onClick={resetEditor}>{t('remotes.cancel')}</Button>
-          : null}
-        <Button size="sm" variant="primary" disabled={busy} onClick={() => void submit()}>
-          {busy ? t('remotes.saving') : t('remotes.save')}
-        </Button>
-      </div>
+      {editorOpen
+        ? (
+          <>
+            <div className={css.credDivider} />
+            <div className={css.credFormTitle}>{editorTitle}</div>
+            <div className={css.credForm}>
+              <div className={css.formField}>
+                <label className={css.formLabel} htmlFor="git-remote-name">{t('remotes.nameLabel')}</label>
+                <input
+                  id="git-remote-name"
+                  className={css.formInput}
+                  value={name}
+                  placeholder={t('remotes.namePlaceholder')}
+                  readOnly={editing !== undefined}
+                  data-modal-autofocus={editing === undefined ? true : undefined}
+                  onChange={event => setName(event.target.value)}
+                />
+              </div>
+              <div className={css.formField}>
+                <label className={css.formLabel} htmlFor="git-remote-url">{t('remotes.urlLabel')}</label>
+                <input
+                  id="git-remote-url"
+                  className={css.formInput}
+                  value={url}
+                  placeholder={t('remotes.urlPlaceholder')}
+                  onChange={event => setUrl(event.target.value)}
+                  onKeyDown={event => {
+                    if (event.key !== 'Enter') return
+                    event.preventDefault()
+                    void submit()
+                  }}
+                />
+              </div>
+              <div className={css.formError}>{formError ?? ''}</div>
+            </div>
+            {/* Cancel closes the editor and keeps the list — the modal itself
+              * is closed from its own footer, as in the credential editor. */}
+            <div className={css.credFooter}>
+              <Button size="sm" variant="outline" onClick={resetEditor}>{t('cancel')}</Button>
+              <Button size="sm" variant="primary" disabled={busy} onClick={() => void submit()}>
+                {busy ? t('remotes.saving') : t('remotes.save')}
+              </Button>
+            </div>
+          </>
+        )
+        : null}
     </Modal>
   )
 }
