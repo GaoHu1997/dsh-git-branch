@@ -1,3 +1,4 @@
+import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { CredentialStoreError, type CredentialStore, type GitCredential } from '../src/credentials.ts'
 import type { Exec, ExecResult } from '../src/git.ts'
@@ -55,7 +56,9 @@ describe('gitNetworkRequestIssue', () => {
     for (const subcommand of ['fetch', 'pull', 'push', 'ls-remote']) {
       expect(gitNetworkRequestIssue('/repo', [subcommand])).toBeUndefined()
     }
-    expect(gitNetworkRequestIssue('C:\\repo', ['push', 'origin', 'main'])).toBeUndefined()
+    // The validator uses the platform's own isAbsolute, so the second shape
+    // must come from resolve() — a bare `C:\repo` is only absolute on win32.
+    expect(gitNetworkRequestIssue(resolve('repo'), ['push', 'origin', 'main'])).toBeUndefined()
   })
 
   it('rejects a relative or empty repoPath', () => {
