@@ -224,6 +224,63 @@ export type GitWorktreeKey =
   | 'accel.savedOn'
   | 'accel.savedOff'
   | 'accel.mirrorDownHint'
+  | 'panel.credentials'
+  | 'cred.title'
+  | 'cred.hint'
+  | 'cred.empty'
+  | 'cred.hostLabel'
+  | 'cred.hostPlaceholder'
+  | 'cred.presets'
+  | 'cred.customPreset'
+  | 'cred.usernameLabel'
+  | 'cred.usernameOptional'
+  | 'cred.usernamePlaceholder'
+  | 'cred.secretLabel'
+  | 'cred.secretKeep'
+  | 'cred.secretPlaceholder'
+  | 'cred.method'
+  | 'cred.methodToken'
+  | 'cred.methodPassword'
+  | 'cred.getToken'
+  | 'cred.add'
+  | 'cred.edit'
+  | 'cred.save'
+  | 'cred.saving'
+  | 'cred.delete'
+  | 'cred.deleting'
+  | 'cred.confirmDelete'
+  | 'cred.cancel'
+  | 'cred.saved'
+  | 'cred.deleted'
+  | 'cred.loadFailed'
+  | 'cred.hostInvalid'
+  | 'cred.hostEmpty'
+  | 'cred.usernameEmpty'
+  | 'cred.secretEmpty'
+  | 'panel.remotes'
+  | 'remotes.title'
+  | 'remotes.hint'
+  | 'remotes.empty'
+  | 'remotes.add'
+  | 'remotes.nameLabel'
+  | 'remotes.namePlaceholder'
+  | 'remotes.urlLabel'
+  | 'remotes.urlPlaceholder'
+  | 'remotes.fetchUrl'
+  | 'remotes.pushUrl'
+  | 'remotes.save'
+  | 'remotes.saving'
+  | 'remotes.edit'
+  | 'remotes.remove'
+  | 'remotes.confirmRemove'
+  | 'remotes.cancel'
+  | 'remotes.saved'
+  | 'remotes.removed'
+  | 'remotes.loadFailed'
+  | 'remotes.nameEmpty'
+  | 'remotes.nameInvalid'
+  | 'remotes.urlEmpty'
+  | 'remotes.urlInvalid'
 
 /** English dictionary — complete by construction. */
 export const en: Record<GitWorktreeKey, string> = {
@@ -445,6 +502,63 @@ export const en: Record<GitWorktreeKey, string> = {
   'accel.savedOn': 'China acceleration enabled: {url}',
   'accel.savedOff': 'China acceleration disabled',
   'accel.mirrorDownHint': 'If the mirror is down, disable acceleration or change the URL',
+  'panel.credentials': 'Credentials',
+  'cred.title': 'Git credentials',
+  'cred.hint': 'Global, one entry per host: a token saved for github.com serves every repository. Stored only on this machine in git-credentials.json.',
+  'cred.empty': 'No credentials saved yet',
+  'cred.hostLabel': 'Host',
+  'cred.hostPlaceholder': 'github.com',
+  'cred.presets': 'Common hosts',
+  'cred.customPreset': 'Custom host',
+  'cred.usernameLabel': 'Username',
+  'cred.usernameOptional': 'Username (optional)',
+  'cred.usernamePlaceholder': 'Account name or e-mail',
+  'cred.secretLabel': 'Token or password',
+  'cred.secretKeep': 'A secret is already saved — leave blank to keep it',
+  'cred.secretPlaceholder': 'Paste a token or password',
+  'cred.method': 'Authentication',
+  'cred.methodToken': 'Token',
+  'cred.methodPassword': 'Username and password',
+  'cred.getToken': 'Get a token',
+  'cred.add': 'Add credential',
+  'cred.edit': 'Edit',
+  'cred.save': 'Save',
+  'cred.saving': 'Saving…',
+  'cred.delete': 'Delete',
+  'cred.deleting': 'Deleting…',
+  'cred.confirmDelete': 'Delete for good',
+  'cred.cancel': 'Cancel',
+  'cred.saved': 'Saved the credential for {host}',
+  'cred.deleted': 'Deleted the credential for {host}',
+  'cred.loadFailed': 'Could not read the credential store',
+  'cred.hostInvalid': 'Enter a host such as github.com',
+  'cred.hostEmpty': 'Enter a host',
+  'cred.usernameEmpty': 'Enter a username',
+  'cred.secretEmpty': 'Enter a token or password for a new host',
+  'panel.remotes': 'Remotes',
+  'remotes.title': 'Remote addresses',
+  'remotes.hint': 'Remotes belong to the whole repository and apply to every worktree of it.',
+  'remotes.empty': 'No remote is configured',
+  'remotes.add': 'Add remote',
+  'remotes.nameLabel': 'Name',
+  'remotes.namePlaceholder': 'origin',
+  'remotes.urlLabel': 'Address',
+  'remotes.urlPlaceholder': 'https://github.com/user/repo.git',
+  'remotes.fetchUrl': 'Fetch',
+  'remotes.pushUrl': 'Push',
+  'remotes.save': 'Save',
+  'remotes.saving': 'Saving…',
+  'remotes.edit': 'Change address',
+  'remotes.remove': 'Remove',
+  'remotes.confirmRemove': 'Remove for good',
+  'remotes.cancel': 'Cancel',
+  'remotes.saved': 'Updated the remote {name}',
+  'remotes.removed': 'Removed the remote {name}',
+  'remotes.loadFailed': 'Could not read the remotes',
+  'remotes.nameEmpty': 'Enter a name',
+  'remotes.nameInvalid': 'Only letters, digits, ".", "_" and "-" are allowed',
+  'remotes.urlEmpty': 'Enter an address',
+  'remotes.urlInvalid': 'Enter a valid remote address',
 }
 
 /** 中文词典。 */
@@ -667,4 +781,61 @@ export const zh: Record<GitWorktreeKey, string> = {
   'accel.savedOn': '已启用国内加速：{url}',
   'accel.savedOff': '已关闭国内加速',
   'accel.mirrorDownHint': '若加速地址不可用，可停用国内加速或更换地址',
+  'panel.credentials': '密钥配置',
+  'cred.title': 'Git 密钥配置',
+  'cred.hint': '全局生效：同一域名只需配置一次，该域名的所有仓库共用。密钥只保存在本机 git-credentials.json 中。',
+  'cred.empty': '还没有配置任何密钥',
+  'cred.hostLabel': '域名',
+  'cred.hostPlaceholder': 'github.com',
+  'cred.presets': '常用平台',
+  'cred.customPreset': '自定义域名',
+  'cred.usernameLabel': '用户名',
+  'cred.usernameOptional': '用户名（可选）',
+  'cred.usernamePlaceholder': '账号名或邮箱',
+  'cred.secretLabel': '令牌或密码',
+  'cred.secretKeep': '已保存密钥，留空表示不修改',
+  'cred.secretPlaceholder': '粘贴令牌或密码',
+  'cred.method': '认证方式',
+  'cred.methodToken': '令牌',
+  'cred.methodPassword': '账号密码',
+  'cred.getToken': '获取令牌',
+  'cred.add': '新增密钥',
+  'cred.edit': '编辑',
+  'cred.save': '保存',
+  'cred.saving': '保存中…',
+  'cred.delete': '删除',
+  'cred.deleting': '删除中…',
+  'cred.confirmDelete': '确认删除',
+  'cred.cancel': '取消',
+  'cred.saved': '已保存 {host} 的密钥',
+  'cred.deleted': '已删除 {host} 的密钥',
+  'cred.loadFailed': '读取密钥失败',
+  'cred.hostInvalid': '请输入类似 github.com 的域名',
+  'cred.hostEmpty': '请输入域名',
+  'cred.usernameEmpty': '请输入用户名',
+  'cred.secretEmpty': '新域名必须填写令牌或密码',
+  'panel.remotes': '管理远程',
+  'remotes.title': '远程地址',
+  'remotes.hint': '远程地址属于整个仓库，对该仓库的所有工作树生效。',
+  'remotes.empty': '还没有配置远程地址',
+  'remotes.add': '添加远程',
+  'remotes.nameLabel': '名称',
+  'remotes.namePlaceholder': 'origin',
+  'remotes.urlLabel': '地址',
+  'remotes.urlPlaceholder': 'https://github.com/user/repo.git',
+  'remotes.fetchUrl': '提取',
+  'remotes.pushUrl': '推送',
+  'remotes.save': '保存',
+  'remotes.saving': '保存中…',
+  'remotes.edit': '修改地址',
+  'remotes.remove': '移除',
+  'remotes.confirmRemove': '确认移除',
+  'remotes.cancel': '取消',
+  'remotes.saved': '已更新远程 {name}',
+  'remotes.removed': '已移除远程 {name}',
+  'remotes.loadFailed': '读取远程地址失败',
+  'remotes.nameEmpty': '请输入名称',
+  'remotes.nameInvalid': '仅允许字母、数字、"."、"_"、"-"',
+  'remotes.urlEmpty': '请输入地址',
+  'remotes.urlInvalid': '请输入有效的远程地址',
 }

@@ -82,6 +82,22 @@ export const ROUTE_TAG = `${ROUTE_PREFIX}/tag`
 /** POST ROUTE_PREFIX/tag-push — push ONE existing local tag to its remote. */
 export const ROUTE_TAG_PUSH = `${ROUTE_PREFIX}/tag-push`
 
+/** POST ROUTE_PREFIX/credentials — the global per-host credentials, secrets
+ * masked (the stored secret never leaves the host). */
+export const ROUTE_CREDENTIALS = `${ROUTE_PREFIX}/credentials`
+
+/** POST ROUTE_PREFIX/credentials-save — create or update one host credential. */
+export const ROUTE_CREDENTIALS_SAVE = `${ROUTE_PREFIX}/credentials-save`
+
+/** POST ROUTE_PREFIX/credentials-delete — forget one host credential. */
+export const ROUTE_CREDENTIALS_DELETE = `${ROUTE_PREFIX}/credentials-delete`
+
+/** POST ROUTE_PREFIX/remotes — the repository's configured remotes. */
+export const ROUTE_REMOTES = `${ROUTE_PREFIX}/remotes`
+
+/** POST ROUTE_PREFIX/remote — add, re-point or remove ONE remote. */
+export const ROUTE_REMOTE = `${ROUTE_PREFIX}/remote`
+
 /** POST ROUTE_PREFIX/ai-commit-message — one-shot LLM commit message from
  * the staged diff (mounted only where the host provides the llm service). */
 export const ROUTE_AI_COMMIT_MESSAGE = `${ROUTE_PREFIX}/ai-commit-message`
@@ -652,3 +668,82 @@ export interface AiCommitMessageResult {
   /** The generated commit message (subject, optionally followed by a body). */
   message: string
 }
+
+/** How a stored credential's secret is meant to be used. */
+export type CredentialMethod = 'token' | 'password'
+
+/** One credential row as the browser sees it: the secret is masked. */
+export interface CredentialEntryView {
+  /** Normalized remote host the credential belongs to. */
+  host: string
+  username: string
+  method: CredentialMethod
+  /** Epoch millis of the last save. */
+  updatedAt: number
+  /** Masked tail (`****abcd`) — never the secret itself. */
+  secretMask: string
+}
+
+/** POST credentials response body. */
+export interface CredentialsResult {
+  credentials: CredentialEntryView[]
+}
+
+/** POST credentials-save request body. */
+export interface CredentialSaveBody {
+  /** Remote host, bare or pasted as a full remote URL (normalized host-side). */
+  host: string
+  username: string
+  method: CredentialMethod
+  /** Token or password. Omitted/blank on an EXISTING host keeps the stored
+   * secret; a new host requires it. */
+  secret?: string
+}
+
+/** POST credentials-save response body: the updated masked list. */
+export type CredentialSaveResult = CredentialsResult
+
+/** POST credentials-delete request body. */
+export interface CredentialDeleteBody {
+  host: string
+}
+
+/** POST credentials-delete response body: the updated masked list. */
+export type CredentialDeleteResult = CredentialsResult
+
+/** One configured remote. */
+export interface RemoteEntry {
+  name: string
+  /** URL `git fetch` uses. */
+  fetchUrl: string
+  /** URL `git push` uses (equals fetchUrl unless a push URL is set apart). */
+  pushUrl: string
+}
+
+/** POST remotes response body. */
+export interface RemotesResult {
+  remotes: RemoteEntry[]
+}
+
+/** POST remotes request body. */
+export interface RemotesBody {
+  /** Any directory inside the repository (remotes are repository-wide). */
+  repoPath: string
+}
+
+/** The mutation one /remote call performs. */
+export type RemoteAction = 'add' | 'set-url' | 'remove'
+
+/** POST remote request body. */
+export interface RemoteMutationBody {
+  /** Any directory inside the repository (remotes are repository-wide). */
+  repoPath: string
+  action: RemoteAction
+  /** The remote name (validated host-side). */
+  name: string
+  /** The new URL; required for `add` and `set-url`, absent for `remove`. */
+  url?: string
+}
+
+/** POST remote response body: the repository's remotes after the change. */
+export type RemoteMutationResult = RemotesResult

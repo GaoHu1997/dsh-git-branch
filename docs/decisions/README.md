@@ -37,3 +37,6 @@
 - [0018 — Git 管理面板加「国内加速」按钮（加速前缀 URL 重写）](0018-cn-accelerate-mirror-prefix.md)
 - [0019 — 提交历史图、筛选与右键操作（含行间连线几何修复）](0019-git-history-graph-panel.md)
 - [0020 — 提交历史右键「推送标签」动作](0020-push-tag-action.md)
+- [0021 — 全局按域名的 Git 密钥配置](0021-global-git-credentials.md)
+- [0022 — 面板内管理远程地址（含多个远程）](0022-remote-address-management.md)
+- [0023 — 令牌免用户名与 AI 可读的密钥工具](0023-token-without-username-and-credentials-tool.md)

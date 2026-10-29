@@ -22,8 +22,19 @@ import { isAbsoluteConfigPath } from './normalize.js'
 export function resolveRootDir(rootDir: string | undefined, home: string, envHome: string | undefined): string {
   const configured = rootDir?.trim()
   if (configured !== undefined && configured !== '') return configured
-  const base = typeof envHome === 'string' && envHome.trim() !== '' ? envHome : join(home, '.dsh')
-  return join(base, 'gitworktree')
+  return join(resolveDshHome(home, envHome), 'gitworktree')
+}
+
+/**
+ * Resolve the dsh configuration home: `$DSH_HOME` when set (a blank value
+ * counts as unset), else `~/.dsh`. Host-owned files that are NOT part of the
+ * settings document (the global git credential store) live directly here.
+ * @param home - user home directory (`os.homedir()` seam).
+ * @param envHome - `$DSH_HOME` environment value seam.
+ * @returns an absolute directory path.
+ */
+export function resolveDshHome(home: string, envHome: string | undefined): string {
+  return typeof envHome === 'string' && envHome.trim() !== '' ? envHome : join(home, '.dsh')
 }
 
 /**

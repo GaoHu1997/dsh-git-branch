@@ -125,3 +125,48 @@ export function normalizeAccelerateUrl(value: string): string {
   const trimmed = value.trim()
   return trimmed.endsWith('/') ? trimmed : `${trimmed}/`
 }
+
+/** Why a user-typed REMOTE name is not acceptable yet (null = fine). */
+export type RemoteNameIssue = 'empty' | 'leadingDash' | 'illegal'
+
+/**
+ * Pre-flight check of a remote name: non-empty; no leading `-` (git would
+ * parse it as a flag); letters, digits, `.`, `_` and `-` only (`/`, space and
+ * `~^:?*[\` are outside what a remote name can be typed as here); the lone
+ * `.`/`..` are rejected. Git stays the authority — a miss surfaces through
+ * the error envelope — this only feeds immediate form feedback.
+ * @param name - raw draft text.
+ * @returns the issue kind, or null when acceptable.
+ */
+export function remoteNameIssue(name: string): RemoteNameIssue | null {
+  if (name.trim() === '') return 'empty'
+  if (name.startsWith('-')) return 'leadingDash'
+  if (!/^[A-Za-z0-9._-]+$/.test(name)) return 'illegal'
+  if (name === '.' || name === '..') return 'illegal'
+  return null
+}
+
+/** Why a user-typed REMOTE URL is not acceptable yet (undefined = fine). */
+export type RemoteUrlIssue = 'empty' | 'whitespace' | 'invalid'
+
+/**
+ * Pre-flight check of a remote URL. Accepted shapes: any `scheme://…` URL
+ * (`https://`, `ssh://`, `git://`, `file://`), an scp-like
+ * `user@host:path`, and an absolute local path (a legitimate `file` remote).
+ * Everything else — a bare word, a URL with stray whitespace, a value git
+ * would read as a flag — is rejected. Git validates the remote once added.
+ * @param url - raw draft text.
+ * @returns the issue kind, or undefined when acceptable.
+ */
+export function remoteUrlIssue(url: string): RemoteUrlIssue | undefined {
+  const trimmed = url.trim()
+  if (trimmed === '') return 'empty'
+  if (trimmed.startsWith('-')) return 'invalid'
+  // Local-path remotes may contain spaces (`C:\my repo`), so the path shape
+  // is classified before the whitespace rule.
+  if (isAbsoluteConfigPath(trimmed)) return undefined
+  if (/\s/.test(trimmed)) return 'whitespace'
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(trimmed)) return undefined
+  if (/^[^\s@/]+@[^\s:/]+:\S+$/.test(trimmed)) return undefined
+  return 'invalid'
+}

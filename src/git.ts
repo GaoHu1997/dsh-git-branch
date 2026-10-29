@@ -9,7 +9,7 @@ import { existsSync, readdirSync } from 'node:fs'
 import { appendFile, mkdir, readFile, rm } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, normalize, resolve } from 'node:path'
 import { accelerateUrlError, localBranchName, normalizeAccelerateUrl } from './normalize.js'
-import type { BranchEntry, WorktreeEntry, WorkspaceGitFacts } from './wire.js'
+import type { BranchEntry, RemoteEntry, WorktreeEntry, WorkspaceGitFacts } from './wire.js'
 
 /** One process result as the seam reports it. */
 export interface ExecResult {
@@ -593,9 +593,11 @@ export function accelArgs(prefix: string | undefined): readonly string[] {
  * @param repoRoot - main worktree directory (fetch is repository-wide).
  * @param accelPrefix - optional cn-accelerate mirror prefix (see
  * {@link accelArgs}); only the READ half of the network commands gets it.
+ * @param authArgs - optional per-host credential `-c` pairs (see
+ * `credentials.ts`); prepended before the subcommand like the accel rewrite.
  */
-export async function fetchAll(exec: Exec, repoRoot: string, accelPrefix?: string): Promise<void> {
-  await git(exec, repoRoot, [...accelArgs(accelPrefix), 'fetch', '--all', '--prune'], NETWORK_TIMEOUT_MS)
+export async function fetchAll(exec: Exec, repoRoot: string, accelPrefix?: string, authArgs: readonly string[] = []): Promise<void> {
+  await git(exec, repoRoot, [...accelArgs(accelPrefix), ...authArgs, 'fetch', '--all', '--prune'], NETWORK_TIMEOUT_MS)
 }
 
 /** Outcome of {@link updateBranch}: the branch touched and whether it moved. */
@@ -620,8 +622,8 @@ export interface UpdateOutcome {
  * @returns the branch name and whether HEAD actually moved (false = the
  * upstream already contained it).
  */
-export async function updateBranch(exec: Exec, cwd: string, accelPrefix?: string): Promise<UpdateOutcome> {
-  await fetchAll(exec, cwd, accelPrefix)
+export async function updateBranch(exec: Exec, cwd: string, accelPrefix?: string, authArgs: readonly string[] = []): Promise<UpdateOutcome> {
+  await fetchAll(exec, cwd, accelPrefix, authArgs)
   const before = (await git(exec, cwd, ['rev-parse', 'HEAD'])).trim()
   await git(exec, cwd, ['merge', '--ff-only', '@{u}'])
   const after = (await git(exec, cwd, ['rev-parse', 'HEAD'])).trim()
@@ -653,9 +655,9 @@ export interface PushOutcome {
  * without an upstream can still be handed to `git push`, so Git's own
  * push-specific diagnostic is preserved; in that case `pushed` is false.
  */
-export async function pushBranch(exec: Exec, cwd: string): Promise<PushOutcome> {
+export async function pushBranch(exec: Exec, cwd: string, authArgs: readonly string[] = []): Promise<PushOutcome> {
   const before = await gitMaybe(exec, cwd, ['rev-parse', '@{u}'])
-  await git(exec, cwd, ['push'], NETWORK_TIMEOUT_MS)
+  await git(exec, cwd, [...authArgs, 'push'], NETWORK_TIMEOUT_MS)
   const after = await gitMaybe(exec, cwd, ['rev-parse', '@{u}'])
   const branch = (await gitMaybe(exec, cwd, ['branch', '--show-current']))?.trim() ?? ''
   return { branch, pushed: before !== undefined && after !== undefined && before.trim() !== after.trim() }
@@ -727,21 +729,93 @@ export interface TagPushOutcome {
  * @param remote - the remote to publish to (see {@link resolvePushRemote}).
  * @returns the tag, the remote, and whether the push had to run.
  */
-export async function pushTag(exec: Exec, cwd: string, name: string, remote: string): Promise<TagPushOutcome> {
+export async function pushTag(exec: Exec, cwd: string, name: string, remote: string, authArgs: readonly string[] = []): Promise<TagPushOutcome> {
   const ref = `refs/tags/${name}`
   const local = (await git(exec, cwd, ['rev-parse', '--verify', ref])).trim()
-  const listed = await gitMaybe(exec, cwd, ['ls-remote', '--refs', remote, ref], NETWORK_TIMEOUT_MS)
+  const listed = await gitMaybe(exec, cwd, [...authArgs, 'ls-remote', '--refs', remote, ref], NETWORK_TIMEOUT_MS)
   const present = (listed ?? '').split('\n')
     .map(line => line.trim().split(/\s+/)[0] ?? '')
     .includes(local)
   if (present) return { tag: name, remote, pushed: false }
-  await git(exec, cwd, ['push', remote, `${ref}:${ref}`], NETWORK_TIMEOUT_MS)
+  await git(exec, cwd, [...authArgs, 'push', remote, `${ref}:${ref}`], NETWORK_TIMEOUT_MS)
   return { tag: name, remote, pushed: true }
 }
 
 /** Guard for route inputs: a non-empty absolute directory path. */
 export function isAbsoluteDir(value: string): boolean {
   return value.trim() !== '' && isAbsolute(value)
+}
+
+/**
+ * Every configured remote of the repository (`git remote -v`), with the fetch
+ * and push URLs git would actually use. A remote with only one side set
+ * mirrors that URL into both fields — git falls back to it the same way.
+ * @param exec - executor seam.
+ * @param cwd - any directory inside the repository.
+ */
+export async function listRemotes(exec: Exec, cwd: string): Promise<RemoteEntry[]> {
+  const text = await git(exec, cwd, ['remote', '-v'])
+  const byName = new Map<string, { fetchUrl?: string; pushUrl?: string }>()
+  for (const line of text.split('\n')) {
+    // `git remote -v` separates the name from `<url> (fetch|push)` with a tab;
+    // splitting there keeps a local-path URL with spaces intact.
+    const tab = line.indexOf('\t')
+    if (tab <= 0) continue
+    const name = line.slice(0, tab).trim()
+    const rest = line.slice(tab + 1).trim()
+    const match = /^(.*)\s+\((fetch|push)\)$/.exec(rest)
+    if (name === '' || match === null) continue
+    const url = (match[1] ?? '').trim()
+    const entry = byName.get(name) ?? {}
+    if (match[2] === 'fetch') entry.fetchUrl = url
+    else entry.pushUrl = url
+    byName.set(name, entry)
+  }
+  return [...byName.entries()]
+    .map(([name, urls]): RemoteEntry => ({
+      name,
+      fetchUrl: urls.fetchUrl ?? urls.pushUrl ?? '',
+      pushUrl: urls.pushUrl ?? urls.fetchUrl ?? '',
+    }))
+    .sort((left, right) => left.name.localeCompare(right.name))
+}
+
+/**
+ * Register a new remote (`git remote add`). The name/URL were validated by
+ * the route; git still refuses a duplicate name — its stderr rides the
+ * GitError, mapped to 400 for the caller.
+ * @param exec - executor seam.
+ * @param cwd - any directory inside the repository.
+ * @param name - the new remote name.
+ * @param url - its URL (fetch and push; a push URL is not set apart).
+ */
+export async function addRemote(exec: Exec, cwd: string, name: string, url: string): Promise<void> {
+  await git(exec, cwd, ['remote', 'add', name, url])
+}
+
+/**
+ * Re-point an existing remote's fetch AND push URL (`git remote set-url`).
+ * Deliberately both: a separate push URL would survive as a stale target the
+ * UI cannot show, so the panel keeps one address per remote.
+ * @param exec - executor seam.
+ * @param cwd - any directory inside the repository.
+ * @param name - an existing remote name.
+ * @param url - the new URL.
+ */
+export async function setRemoteUrl(exec: Exec, cwd: string, name: string, url: string): Promise<void> {
+  await git(exec, cwd, ['remote', 'set-url', name, url])
+  await git(exec, cwd, ['remote', 'set-url', '--push', name, url])
+}
+
+/**
+ * Forget one remote (`git remote remove`): deletes its remote-tracking refs
+ * and its config section, never the objects the local branches share.
+ * @param exec - executor seam.
+ * @param cwd - any directory inside the repository.
+ * @param name - an existing remote name.
+ */
+export async function removeRemote(exec: Exec, cwd: string, name: string): Promise<void> {
+  await git(exec, cwd, ['remote', 'remove', name])
 }
 
 /** Pre-delete facts of one worktree directory, for the remove-confirm dialog. */

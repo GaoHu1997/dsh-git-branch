@@ -6,12 +6,13 @@
 import { basename, dirname, join, resolve } from 'node:path'
 import { mkdir, readdir, rm, stat } from 'node:fs/promises'
 import { runPostCreateCopy, type CopyFilesSeams } from './copy-files.js'
-import { appendWorktreeExclude, fsExcludeSeams, GitError, addWorktree, addWorktreeCutout, collectAiDiff, commitFiles, commitIndex, createBranch, createTag, cutoutBranchName, deleteBranch, fetchAll, fsDirExists, inspectWorktree, isAbsoluteDir, isStageablePath, listTagNames, logHistory, probeRepo, probeWorkspaceGit, pushTag, removeWorktree, renameBranch, resolveBranch, resolvePushRemote, pushBranch, stagePaths, switchBranch, updateBranch, workingChanges, type DirExists, type ExcludeSeams, type Exec } from './git.js'
-import { ACCEL_DEFAULT_URL, accelerateUrlError, isAbsoluteConfigPath, normalizeAccelerateUrl, sanitizeBranchDir } from './normalize.js'
+import { authConfigArgs, credentialFilePath, createCredentialStore, credentialHostIssue, credentialSecretIssue, credentialUsernameIssue, maskSecret, normalizeCredentialHost, removeCredential, sortCredentials, upsertCredential, type CredentialStore, type GitCredential } from './credentials.js'
+import { appendWorktreeExclude, fsExcludeSeams, GitError, addRemote, addWorktree, addWorktreeCutout, collectAiDiff, commitFiles, commitIndex, createBranch, createTag, cutoutBranchName, deleteBranch, fetchAll, fsDirExists, inspectWorktree, isAbsoluteDir, isStageablePath, listRemotes, listTagNames, logHistory, probeRepo, probeWorkspaceGit, pushTag, removeRemote, removeWorktree, renameBranch, resolveBranch, resolvePushRemote, pushBranch, setRemoteUrl, stagePaths, switchBranch, updateBranch, workingChanges, type DirExists, type ExcludeSeams, type Exec } from './git.js'
+import { ACCEL_DEFAULT_URL, accelerateUrlError, isAbsoluteConfigPath, normalizeAccelerateUrl, remoteNameIssue, remoteUrlIssue, sanitizeBranchDir, type RemoteNameIssue, type RemoteUrlIssue } from './normalize.js'
 import { resolveRootDir } from './settings.js'
 import { COMMIT_MESSAGE_LIMIT } from './wire.js'
 import type {
-  AiCommitMessageBody, AiCommitMessageResult, ChangesBody, ChangesResult, CommitBody, CommitFilesBody, CommitFilesResult, CommitResult, CreateBranchBody, CreateBranchResult, CreateTagBody, CreateTagResult, CreateWorktreeBody, CreateWorktreeResult, DeleteBranchBody, DeleteBranchResult, EnsureDirectoryBody, EnsureDirectoryResult, FetchBody, FetchResult, GroupWorkspacesResult, InspectWorktreeBody, InspectWorktreeResult, LogBody, LogResult, PathExistsResult, PurgeDirectoryBody, PurgeDirectoryResult, PushTagBody, PushTagResult, RemoveWorktreeBody, RemoveWorktreeResult, RenameBranchBody, RenameBranchResult, RepoStatus, RouteError, StageBody, StageResult, SwitchBody, SwitchResult, UpdateBody, UpdateResult, PushBody, PushResult, WorktreesAllResult,
+  AiCommitMessageBody, AiCommitMessageResult, ChangesBody, ChangesResult, CommitBody, CommitFilesBody, CommitFilesResult, CommitResult, CreateBranchBody, CreateBranchResult, CreateTagBody, CreateTagResult, CreateWorktreeBody, CreateWorktreeResult, CredentialDeleteBody, CredentialEntryView, CredentialSaveBody, CredentialsResult, DeleteBranchBody, DeleteBranchResult, EnsureDirectoryBody, EnsureDirectoryResult, FetchBody, FetchResult, GroupWorkspacesResult, InspectWorktreeBody, InspectWorktreeResult, LogBody, LogResult, PathExistsResult, PurgeDirectoryBody, PurgeDirectoryResult, PushTagBody, PushTagResult, RemoteAction, RemoveWorktreeBody, RemoveWorktreeResult, RemotesBody, RemotesResult, RemoteMutationBody, RenameBranchBody, RenameBranchResult, RepoStatus, RouteError, StageBody, StageResult, SwitchBody, SwitchResult, UpdateBody, UpdateResult, PushBody, PushResult, WorktreesAllResult,
 } from './wire.js'
 
 /** Everything the handlers need from the host half. */
@@ -47,6 +48,9 @@ export interface RouteDeps {
   listDir?: (path: string) => Promise<string[]>
   /** Recursive force rm seam (fs.rm with retries); tests substitute. */
   rmRecursive?: (path: string) => Promise<void>
+  /** Global per-host credential store. Absent = the fs-backed store at the
+   * resolved dsh home; tests substitute an in-memory one. */
+  credentialsStore?: CredentialStore
 }
 
 /** Real fs-backed one-level directory listing (names only). Plain FILES are
@@ -79,7 +83,7 @@ export async function fsMkdirRecursive(path: string): Promise<void> {
 /** One route outcome: HTTP status plus the JSON body. */
 export interface RouteOutcome {
   status: number
-  body: RepoStatus | CreateWorktreeResult | SwitchResult | CreateBranchResult | FetchResult | UpdateResult | GroupWorkspacesResult | InspectWorktreeResult | RemoveWorktreeResult | PathExistsResult | EnsureDirectoryResult | WorktreesAllResult | PurgeDirectoryResult | ChangesResult | StageResult | CommitResult | LogResult | CommitFilesResult | CreateTagResult | PushTagResult | AiCommitMessageResult | RouteError
+  body: RepoStatus | CreateWorktreeResult | SwitchResult | CreateBranchResult | FetchResult | UpdateResult | GroupWorkspacesResult | InspectWorktreeResult | RemoveWorktreeResult | PathExistsResult | EnsureDirectoryResult | WorktreesAllResult | PurgeDirectoryResult | ChangesResult | StageResult | CommitResult | LogResult | CommitFilesResult | CreateTagResult | PushTagResult | AiCommitMessageResult | CredentialsResult | RemotesResult | RouteError
 }
 
 /** Uniform failure envelope. */
@@ -97,6 +101,27 @@ function accelPrefix(deps: RouteDeps): string | undefined {
   if (deps.sectionCnAccelerate?.() !== true) return undefined
   const url = deps.sectionCnAccelerateUrl?.() ?? ACCEL_DEFAULT_URL
   return accelerateUrlError(url) === undefined ? normalizeAccelerateUrl(url) : undefined
+}
+
+/** The global credential store: the wired one, else the fs-backed file at the
+ * resolved dsh home (`<dshHome>/git-credentials.json`). */
+function credentialStore(deps: RouteDeps): CredentialStore {
+  return deps.credentialsStore ?? createCredentialStore(credentialFilePath(deps.home(), deps.envHome()))
+}
+
+/**
+ * `-c http.<url>.extraHeader` pairs for every stored credential, ready to
+ * prepend to a git network command. A broken credential FILE must never break
+ * git itself: an unreadable store degrades to "no credentials" (the network
+ * command then runs unauthenticated, as it always did) — the credentials
+ * route is where the file problem surfaces.
+ */
+async function authArgsFor(deps: RouteDeps): Promise<readonly string[]> {
+  try {
+    return authConfigArgs(await credentialStore(deps).load())
+  } catch {
+    return []
+  }
 }
 
 /** Upper bound on distinct paths one /group request may probe. */
@@ -469,7 +494,7 @@ export async function handleCreateWorktree(deps: RouteDeps, body: unknown): Prom
       const resolved = await resolveBranch(deps.exec, facts.repoRoot, branch)
       if (resolved?.remote !== undefined) {
         try {
-          await fetchAll(deps.exec, facts.repoRoot, accelPrefix(deps))
+          await fetchAll(deps.exec, facts.repoRoot, accelPrefix(deps), await authArgsFor(deps))
         } catch (error) {
           fetchWarning = error instanceof GitError ? error.stderr.trim() : error instanceof Error ? error.message : String(error)
         }
@@ -674,7 +699,7 @@ export async function handleFetch(deps: RouteDeps, body: unknown): Promise<Route
   try {
     const facts = await probeRepo(deps.exec, repoPath, deps.dirExists)
     if (facts === undefined) return fail(400, `"${repoPath}" is not inside a git repository`)
-    await fetchAll(deps.exec, facts.repoRoot, accelPrefix(deps))
+    await fetchAll(deps.exec, facts.repoRoot, accelPrefix(deps), await authArgsFor(deps))
     const result: FetchResult = { remote: 'all' }
     return { status: 200, body: result }
   } catch (error) {
@@ -703,7 +728,7 @@ export async function handleUpdate(deps: RouteDeps, body: unknown): Promise<Rout
     // session "update current branch" means the branch that worktree holds.
     // `repoRoot` would fast-forward the main checkout behind the user's back
     // (both are the same directory when the session IS the main checkout).
-    const outcome = await updateBranch(deps.exec, facts.toplevel, accelPrefix(deps))
+    const outcome = await updateBranch(deps.exec, facts.toplevel, accelPrefix(deps), await authArgsFor(deps))
     const result: UpdateResult = { branch: outcome.branch, updated: outcome.updated }
     return { status: 200, body: result }
   } catch (error) {
@@ -729,7 +754,7 @@ export async function handlePush(deps: RouteDeps, body: unknown): Promise<RouteO
     if (facts === undefined) return fail(400, `"${repoPath}" is not inside a git repository`)
     // The session's OWN worktree, not the main checkout: in a linked-worktree
     // session "push current branch" means the branch that worktree holds.
-    const outcome = await pushBranch(deps.exec, facts.toplevel)
+    const outcome = await pushBranch(deps.exec, facts.toplevel, await authArgsFor(deps))
     const result: PushResult = { branch: outcome.branch, pushed: outcome.pushed }
     return { status: 200, body: result }
   } catch (error) {
@@ -1118,7 +1143,7 @@ export async function handlePushTag(deps: RouteDeps, body: unknown): Promise<Rou
     if (!tags.includes(name)) return fail(400, `"${name}" is not a local tag`)
     const choice = await resolvePushRemote(deps.exec, facts.toplevel)
     if (!choice.ok) return fail(400, choice.message)
-    const result = await pushTag(deps.exec, facts.toplevel, name, choice.remote)
+    const result = await pushTag(deps.exec, facts.toplevel, name, choice.remote, await authArgsFor(deps))
     const body: PushTagResult = result
     return { status: 200, body }
   } catch (error) {
@@ -1218,5 +1243,207 @@ export async function handleAiCommitMessage(deps: RouteDeps, llm: LlmStreamRunti
     return { status: 200, body: { message: text } }
   } catch (error) {
     return checkoutFailure(error)
+  }
+}
+
+/** Masked browser view: the stored secret never crosses the wire again. */
+function credentialView(entry: GitCredential): CredentialEntryView {
+  return {
+    host: entry.host,
+    username: entry.username,
+    method: entry.method,
+    updatedAt: entry.updatedAt,
+    secretMask: maskSecret(entry.secret),
+  }
+}
+
+/** Credential-store failures are host-side state (an unreadable/corrupt file,
+ * a failed write), so they answer 500 with the file's own explanation. */
+function storeFailure(error: unknown): RouteOutcome {
+  return fail(500, error instanceof Error ? error.message : String(error))
+}
+
+/**
+ * POST /credentials — every stored credential as a MASKED row. One row per
+ * host: the store is global (not per repository), so the panel edits one
+ * address for github.com, gitlab.com, a self-hosted gitea alike.
+ * @param deps - host dependencies.
+ * @param body - parsed request body: absent or `{}`.
+ */
+export async function handleCredentials(deps: RouteDeps, body: unknown): Promise<RouteOutcome> {
+  const parsed = readBody<Record<string, never>>(body ?? {}, [])
+  if (isOutcome(parsed)) return parsed
+  try {
+    const entries = await credentialStore(deps).load()
+    const result: CredentialsResult = { credentials: sortCredentials(entries).map(credentialView) }
+    return { status: 200, body: result }
+  } catch (error) {
+    return storeFailure(error)
+  }
+}
+
+/**
+ * POST /credentials-save — create or update the credential of ONE host. A
+ * blank `secret` on an existing host keeps the stored secret (the browser
+ * only ever had the mask), while a new host requires one.
+ * @param deps - host dependencies.
+ * @param body - parsed request body: `{ host, username, method, secret? }`.
+ */
+export async function handleCredentialsSave(deps: RouteDeps, body: unknown): Promise<RouteOutcome> {
+  const parsed = readBody<CredentialSaveBody>(body, ['host', 'username', 'method'], [], ['secret'])
+  if (isOutcome(parsed)) return parsed
+  const host = normalizeCredentialHost(parsed.host)
+  if (host === undefined) {
+    return fail(400, credentialHostIssue(parsed.host) === 'empty'
+      ? '"host" must be non-empty'
+      : '"host" must be a remote host such as github.com')
+  }
+  if (parsed.method !== 'token' && parsed.method !== 'password') {
+    return fail(400, '"method" must be "token" or "password"')
+  }
+  const username = parsed.username.trim()
+  const usernameIssue = credentialUsernameIssue(username, parsed.method)
+  if (usernameIssue !== undefined) {
+    return fail(400, usernameIssue === 'empty'
+      ? '"username" is required for "password" credentials'
+      : '"username" must not contain control characters')
+  }
+  try {
+    const store = credentialStore(deps)
+    const entries = await store.load()
+    const existing = entries.find(entry => entry.host === host)
+    const typed = parsed.secret === undefined ? '' : parsed.secret.trim()
+    let secret: string
+    if (typed !== '') secret = typed
+    else if (existing !== undefined) secret = existing.secret
+    else return fail(400, '"secret" is required for a new host')
+    const secretIssue = credentialSecretIssue(secret)
+    if (secretIssue !== undefined) {
+      return fail(400, secretIssue === 'empty'
+        ? '"secret" must be non-empty'
+        : '"secret" must not contain control characters')
+    }
+    const next = upsertCredential(entries, {
+      host,
+      username,
+      secret,
+      method: parsed.method,
+      updatedAt: Date.now(),
+    })
+    await store.save(next)
+    const result: CredentialsResult = { credentials: sortCredentials(next).map(credentialView) }
+    return { status: 200, body: result }
+  } catch (error) {
+    return storeFailure(error)
+  }
+}
+
+/**
+ * POST /credentials-delete — forget ONE host's credential. The other hosts
+ * keep theirs: deletion is per host, never a store reset.
+ * @param deps - host dependencies.
+ * @param body - parsed request body: `{ host }`.
+ */
+export async function handleCredentialsDelete(deps: RouteDeps, body: unknown): Promise<RouteOutcome> {
+  const parsed = readBody<CredentialDeleteBody>(body, ['host'])
+  if (isOutcome(parsed)) return parsed
+  const host = normalizeCredentialHost(parsed.host)
+  if (host === undefined) return fail(400, '"host" must be a remote host such as github.com')
+  try {
+    const store = credentialStore(deps)
+    const entries = await store.load()
+    const next = removeCredential(entries, host)
+    if (next.length === entries.length) return fail(400, `no credential is stored for "${host}"`)
+    await store.save(next)
+    const result: CredentialsResult = { credentials: sortCredentials(next).map(credentialView) }
+    return { status: 200, body: result }
+  } catch (error) {
+    return storeFailure(error)
+  }
+}
+
+/** Human message for a rejected remote NAME. */
+function remoteNameMessage(issue: RemoteNameIssue): string {
+  if (issue === 'empty') return '"name" must be non-empty'
+  if (issue === 'leadingDash') return '"name" must not start with "-"'
+  return '"name" may only contain letters, digits, ".", "_" and "-"'
+}
+
+/** Human message for a rejected remote URL. */
+function remoteUrlMessage(issue: RemoteUrlIssue): string {
+  if (issue === 'empty') return '"url" must be non-empty'
+  if (issue === 'whitespace') return '"url" must not contain whitespace'
+  return '"url" must be an address git accepts (https://..., git@host:path or an absolute path)'
+}
+
+/** Actions one /remote call may take. */
+const REMOTE_ACTIONS: readonly RemoteAction[] = ['add', 'set-url', 'remove']
+
+/**
+ * POST /remotes — the repository's configured remotes with their fetch and
+ * push URLs. Remotes belong to the repository, not to a worktree, so any
+ * directory inside it answers the full list.
+ * @param deps - host dependencies.
+ * @param body - parsed request body: `{ repoPath }`.
+ */
+export async function handleRemotes(deps: RouteDeps, body: unknown): Promise<RouteOutcome> {
+  const parsed = readBody<RemotesBody>(body, ['repoPath'])
+  if (isOutcome(parsed)) return parsed
+  const { repoPath } = parsed
+  if (!isAbsoluteDir(repoPath)) return fail(400, '"repoPath" must be an absolute directory')
+  try {
+    const facts = await probeRepo(deps.exec, repoPath, deps.dirExists)
+    if (facts === undefined) return fail(400, `"${repoPath}" is not inside a git repository`)
+    const remotes = await listRemotes(deps.exec, facts.repoRoot)
+    const result: RemotesResult = { remotes }
+    return { status: 200, body: result }
+  } catch (error) {
+    if (error instanceof GitError) return gitFailure(error)
+    return fail(500, error instanceof Error ? error.message : String(error))
+  }
+}
+
+/**
+ * POST /remote — add, re-point or remove ONE remote, then answer the fresh
+ * list. Existence is checked against `git remote -v` first, so a duplicate
+ * `add` and a missing `set-url`/`remove` answer a clean 400 instead of git's
+ * stderr; the URL is pre-flighted by {@link remoteUrlIssue}.
+ * @param deps - host dependencies.
+ * @param body - parsed request body: `{ repoPath, action, name, url? }`.
+ */
+export async function handleRemote(deps: RouteDeps, body: unknown): Promise<RouteOutcome> {
+  const parsed = readBody<RemoteMutationBody>(body, ['repoPath', 'action', 'name'], [], ['url'])
+  if (isOutcome(parsed)) return parsed
+  const { repoPath, action, name } = parsed
+  if (!isAbsoluteDir(repoPath)) return fail(400, '"repoPath" must be an absolute directory')
+  if (!REMOTE_ACTIONS.includes(action)) return fail(400, '"action" must be "add", "set-url" or "remove"')
+  const nameIssue = remoteNameIssue(name)
+  if (nameIssue !== null) return fail(400, remoteNameMessage(nameIssue))
+  const url = parsed.url === undefined ? '' : parsed.url.trim()
+  if (action !== 'remove') {
+    const urlIssue = remoteUrlIssue(url)
+    if (urlIssue !== undefined) return fail(400, remoteUrlMessage(urlIssue))
+  }
+  try {
+    const facts = await probeRepo(deps.exec, repoPath, deps.dirExists)
+    if (facts === undefined) return fail(400, `"${repoPath}" is not inside a git repository`)
+    const before = await listRemotes(deps.exec, facts.repoRoot)
+    const exists = before.some(remote => remote.name === name)
+    if (action === 'add') {
+      if (exists) return fail(400, `remote "${name}" already exists`)
+      await addRemote(deps.exec, facts.repoRoot, name, url)
+    } else if (!exists) {
+      return fail(400, `remote "${name}" does not exist`)
+    } else if (action === 'set-url') {
+      await setRemoteUrl(deps.exec, facts.repoRoot, name, url)
+    } else {
+      await removeRemote(deps.exec, facts.repoRoot, name)
+    }
+    const remotes = await listRemotes(deps.exec, facts.repoRoot)
+    const result: RemotesResult = { remotes }
+    return { status: 200, body: result }
+  } catch (error) {
+    if (error instanceof GitError) return gitFailure(error)
+    return fail(500, error instanceof Error ? error.message : String(error))
   }
 }

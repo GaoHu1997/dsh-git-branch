@@ -66,6 +66,8 @@ export interface BranchSectionProps {
   onRename: (branch: BranchRow, newName: string) => void
   onDelete: (branch: BranchRow) => void
   onCreate: (name: string, from?: string) => void
+  /** Opens the repository's remote-address editor (panel-owned modal). */
+  onManageRemotes?: () => void
   /** Localized title of the delete confirm's target (the shared ask line). */
 }
 
@@ -113,7 +115,7 @@ function BranchFloatMenu(props: {
 
 /** The branches section. */
 export function BranchSection(props: BranchSectionProps): JSX.Element {
-  const { t, locals, remotes, busy, onCheckout, onRename, onDelete, onCreate } = props
+  const { t, locals, remotes, busy, onCheckout, onRename, onDelete, onCreate, onManageRemotes } = props
   const [menu, setMenu] = useState<BranchMenuState | null>(null)
   const [dialog, setDialog] = useState<BranchDialogState | null>(null)
   const [draft, setDraft] = useState('')
@@ -320,6 +322,11 @@ export function BranchSection(props: BranchSectionProps): JSX.Element {
         <div className={css.sectionTools}>
           <button type="button" className={css.treeToggle} onClick={expandAll}>{t('menuExpandAll')}</button>
           <button type="button" className={css.treeToggle} onClick={collapseAll}>{t('menuCollapseAll')}</button>
+          {onManageRemotes === undefined ? null : (
+            <button type="button" className={css.treeToggle} disabled={busy} onClick={onManageRemotes}>
+              {t('panel.remotes')}
+            </button>
+          )}
           <button type="button" className={css.act} disabled={busy} onClick={() => openDialog('new')}>
             + {t('panel.branchNew')}
           </button>

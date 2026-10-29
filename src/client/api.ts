@@ -5,9 +5,9 @@
  */
 
 import type {
-  AiCommitMessageBody, AiCommitMessageResult, ChangesResult, CommitFilesResult, CommitResult, CreateBranchResult, CreateTagResult, CreateWorktreeResult, DeleteBranchResult, EnsureDirectoryResult, FetchResult, GroupWorkspacesResult, InspectWorktreeResult, LogResult, PathExistsResult, PurgeDirectoryResult, PushTagResult, RemoveWorktreeResult, RenameBranchResult, RepoStatus, RouteError, StageBody, StageResult, SwitchResult, UpdateResult, PushResult, WorktreesAllResult,
+  AiCommitMessageBody, AiCommitMessageResult, ChangesResult, CommitFilesResult, CommitResult, CreateBranchResult, CreateTagResult, CreateWorktreeResult, CredentialDeleteBody, CredentialSaveBody, CredentialsResult, DeleteBranchResult, EnsureDirectoryResult, FetchResult, GroupWorkspacesResult, InspectWorktreeResult, LogResult, PathExistsResult, PurgeDirectoryResult, PushTagResult, RemoteMutationBody, RemoveWorktreeResult, RemotesResult, RenameBranchResult, RepoStatus, RouteError, StageBody, StageResult, SwitchResult, UpdateResult, PushResult, WorktreesAllResult,
 } from '../wire.ts'
-import { ROUTE_AI_COMMIT_MESSAGE, ROUTE_BRANCH, ROUTE_BRANCH_DELETE, ROUTE_BRANCH_RENAME, ROUTE_CHANGES, ROUTE_COMMIT, ROUTE_COMMIT_FILES, ROUTE_ENSURE_DIRECTORY, ROUTE_EXISTS, ROUTE_FETCH, ROUTE_GROUP, ROUTE_INSPECT, ROUTE_LOG, ROUTE_PUSH, ROUTE_PURGE, ROUTE_REMOVE, ROUTE_STAGE, ROUTE_STATUS, ROUTE_SWITCH, ROUTE_TAG, ROUTE_TAG_PUSH, ROUTE_UPDATE, ROUTE_WORKTREE, ROUTE_WORKTREES_ALL } from '../wire.ts'
+import { ROUTE_AI_COMMIT_MESSAGE, ROUTE_BRANCH, ROUTE_BRANCH_DELETE, ROUTE_BRANCH_RENAME, ROUTE_CHANGES, ROUTE_COMMIT, ROUTE_COMMIT_FILES, ROUTE_CREDENTIALS, ROUTE_CREDENTIALS_DELETE, ROUTE_CREDENTIALS_SAVE, ROUTE_ENSURE_DIRECTORY, ROUTE_EXISTS, ROUTE_FETCH, ROUTE_GROUP, ROUTE_INSPECT, ROUTE_LOG, ROUTE_PUSH, ROUTE_PURGE, ROUTE_REMOTE, ROUTE_REMOTES, ROUTE_REMOVE, ROUTE_STAGE, ROUTE_STATUS, ROUTE_SWITCH, ROUTE_TAG, ROUTE_TAG_PUSH, ROUTE_UPDATE, ROUTE_WORKTREE, ROUTE_WORKTREES_ALL } from '../wire.ts'
 
 /** One route call outcome: the parsed body, or the error envelope text. */
 type Call<T> = (T & { ok: true }) | { ok: false; error: string }
@@ -329,6 +329,47 @@ export function requestCreateTag(
  */
 export function requestPushTag(repoPath: string, name: string): Promise<Call<PushTagResult>> {
   return post<PushTagResult>(ROUTE_TAG_PUSH, { repoPath, name })
+}
+
+/**
+ * Every stored GLOBAL credential, secrets masked. One row per host: a token
+ * saved for github.com serves every repository that talks to github.com.
+ */
+export function requestCredentials(): Promise<Call<CredentialsResult>> {
+  return post<CredentialsResult>(ROUTE_CREDENTIALS, {})
+}
+
+/**
+ * Create or update the credential of ONE host. A blank `secret` on an
+ * existing host keeps the stored secret.
+ * @param body - `{ host, username, method, secret? }`.
+ */
+export function requestSaveCredential(body: CredentialSaveBody): Promise<Call<CredentialsResult>> {
+  return post<CredentialsResult>(ROUTE_CREDENTIALS_SAVE, body)
+}
+
+/**
+ * Forget ONE host's credential.
+ * @param body - `{ host }`.
+ */
+export function requestDeleteCredential(body: CredentialDeleteBody): Promise<Call<CredentialsResult>> {
+  return post<CredentialsResult>(ROUTE_CREDENTIALS_DELETE, body)
+}
+
+/**
+ * The repository's configured remotes (fetch/push URLs).
+ * @param repoPath - absolute directory inside the repository.
+ */
+export function requestRemotes(repoPath: string): Promise<Call<RemotesResult>> {
+  return post<RemotesResult>(ROUTE_REMOTES, { repoPath })
+}
+
+/**
+ * Add, re-point or remove one remote; resolves with the fresh list.
+ * @param body - `{ repoPath, action, name, url? }`.
+ */
+export function requestMutateRemote(body: RemoteMutationBody): Promise<Call<RemotesResult>> {
+  return post<RemotesResult>(ROUTE_REMOTE, body)
 }
 
 /**

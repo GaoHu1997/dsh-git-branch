@@ -28,7 +28,9 @@ import type { GitPanelTranslator, PanelHostContext, SessionModelSelection, Sideb
 import type { AccelFace } from './accel-form.ts'
 import { BranchSection } from './panel/BranchSection.tsx'
 import { CnAcceleratePopover } from './panel/CnAcceleratePopover.tsx'
+import { CredentialModal } from './panel/CredentialModal.tsx'
 import { HistorySection, type CommitFilesState } from './panel/HistorySection.tsx'
+import { RemotesModal } from './panel/RemotesModal.tsx'
 import { UncommittedSection } from './panel/UncommittedSection.tsx'
 import css from './GitHistoryPanel.module.css'
 
@@ -87,6 +89,8 @@ const GitHistoryPanelData = forwardRef<GitHistoryPanelDataHandle, {
   const [expanded, setExpanded] = useState<string | null>(null)
   const [filesByHash, setFilesByHash] = useState<Readonly<Record<string, CommitFilesState>>>({})
   const [sectionBusy, setSectionBusy] = useState(false)
+  /** The remote-address editor (branch card's 「管理远程」 entry). */
+  const [remotesOpen, setRemotesOpen] = useState(false)
   const [syncBusy, setSyncBusy] = useState(false)
   const [commitMenuOpen, setCommitMenuOpen] = useState(false)
   const [commitDraft, setCommitDraft] = useState('')
@@ -513,6 +517,7 @@ const GitHistoryPanelData = forwardRef<GitHistoryPanelDataHandle, {
         onRename={onRename}
         onDelete={onDelete}
         onCreate={onCreate}
+        onManageRemotes={() => setRemotesOpen(true)}
       />
       <HistorySection
         t={t}
@@ -535,6 +540,17 @@ const GitHistoryPanelData = forwardRef<GitHistoryPanelDataHandle, {
         onPushTag={onPushTag}
         pushToast={pushToast}
       />
+      {remotesOpen
+        ? (
+          <RemotesModal
+            repoPath={cwd}
+            t={t}
+            pushToast={pushToast}
+            onClose={() => setRemotesOpen(false)}
+            onChanged={() => void loadAll()}
+          />
+        )
+        : null}
     </div>
   )
 })
@@ -571,6 +587,10 @@ export function GitPanelTab(props: GitPanelTabProps): JSX.Element {
   // 取消) discards the staged edits — the form is one-shot by save.
   const accelState = useSyncExternalStore(accel.store.subscribe, accel.store.getSnapshot)
   const [accelOpen, setAccelOpen] = useState(false)
+  // The credential editor is GLOBAL (one row per remote host), so it hangs
+  // off the chrome rather than a repository and opens with or without a tab
+  // cwd. Its list arrives from the host half, never from the tab's status.
+  const [credOpen, setCredOpen] = useState(false)
   const accelOn = useCallback(() => accel.store.getSnapshot().enabled, [accel])
   const closeAccel = useCallback(() => {
     accel.discardAccel()
@@ -601,6 +621,17 @@ export function GitPanelTab(props: GitPanelTabProps): JSX.Element {
           </div>
           <button
             type="button"
+            className={credOpen ? css.cnBtnOn : css.cnBtn}
+            title={t('panel.credentials')}
+            aria-label={t('panel.credentials')}
+            aria-expanded={credOpen}
+            onClick={() => setCredOpen(open => !open)}
+          >
+            <span aria-hidden="true">🔑</span>
+            <span>{t('panel.credentials')}</span>
+          </button>
+          <button
+            type="button"
             className={css.refreshBtn}
             disabled={cwd === undefined}
             title={t('panel.refresh')}
@@ -611,6 +642,9 @@ export function GitPanelTab(props: GitPanelTabProps): JSX.Element {
           </button>
         </div>
       </header>
+      {credOpen
+        ? <CredentialModal t={t} pushToast={pushToast} onClose={() => setCredOpen(false)} />
+        : null}
       {cwd === undefined
         ? <div className={css.empty}>{t('panel.noSession')}</div>
         : <GitHistoryPanelData key={cwd} ref={dataRef} cwd={cwd} model={model} t={t} pushToast={pushToast} accelOn={accelOn} />}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ACCEL_DEFAULT_URL, accelerateUrlError, branchNameIssue, isAbsoluteConfigPath, localBranchName, normalizeAccelerateUrl, sanitizeBranchDir, splitRemoteBranch } from '../src/normalize.ts'
+import { ACCEL_DEFAULT_URL, accelerateUrlError, branchNameIssue, isAbsoluteConfigPath, localBranchName, normalizeAccelerateUrl, remoteNameIssue, remoteUrlIssue, sanitizeBranchDir, splitRemoteBranch } from '../src/normalize.ts'
 
 describe('sanitizeBranchDir', () => {
   it('keeps plain names unchanged', () => {
@@ -142,5 +142,40 @@ describe('normalizeAccelerateUrl', () => {
   it('ships a default that is already a normalized prefix', () => {
     expect(ACCEL_DEFAULT_URL).toBe('https://gh-proxy.com/')
     expect(normalizeAccelerateUrl(ACCEL_DEFAULT_URL)).toBe(ACCEL_DEFAULT_URL)
+  })
+})
+
+describe('remoteNameIssue', () => {
+  it('accepts the names git itself allows', () => {
+    expect(remoteNameIssue('origin')).toBeNull()
+    expect(remoteNameIssue('up-stream_2.x')).toBeNull()
+  })
+
+  it('rejects empty, dash-leading and unusual names', () => {
+    expect(remoteNameIssue('')).toBe('empty')
+    expect(remoteNameIssue('  ')).toBe('empty')
+    expect(remoteNameIssue('-origin')).toBe('leadingDash')
+    expect(remoteNameIssue('ori gin')).toBe('illegal')
+    expect(remoteNameIssue('origin.git')).toBeNull()
+    expect(remoteNameIssue('.')).toBe('illegal')
+    expect(remoteNameIssue('..')).toBe('illegal')
+  })
+})
+
+describe('remoteUrlIssue', () => {
+  it('accepts scheme URLs, scp-like addresses and absolute paths', () => {
+    expect(remoteUrlIssue('https://github.com/o/r.git')).toBeUndefined()
+    expect(remoteUrlIssue('git@github.com:o/r.git')).toBeUndefined()
+    expect(remoteUrlIssue('ssh://git@host:2222/o/r.git')).toBeUndefined()
+    expect(remoteUrlIssue('D:\\wt\\r')).toBeUndefined()
+    expect(remoteUrlIssue('/srv/git/r.git')).toBeUndefined()
+  })
+
+  it('rejects an empty, whitespace or malformed address', () => {
+    expect(remoteUrlIssue('')).toBe('empty')
+    expect(remoteUrlIssue('   ')).toBe('empty')
+    expect(remoteUrlIssue('-u')).toBe('invalid')
+    expect(remoteUrlIssue('not a url')).toBe('whitespace')
+    expect(remoteUrlIssue('origin')).toBe('invalid')
   })
 })
