@@ -233,9 +233,9 @@ export type GitWorktreeKey =
   | 'cred.presets'
   | 'cred.customPreset'
   | 'cred.usernameLabel'
-  | 'cred.usernameOptional'
   | 'cred.usernamePlaceholder'
-  | 'cred.secretLabel'
+  | 'cred.secretTokenLabel'
+  | 'cred.secretPasswordLabel'
   | 'cred.secretKeep'
   | 'cred.secretPlaceholder'
   | 'cred.method'
@@ -511,9 +511,9 @@ export const en: Record<GitWorktreeKey, string> = {
   'cred.presets': 'Common hosts',
   'cred.customPreset': 'Custom host',
   'cred.usernameLabel': 'Username',
-  'cred.usernameOptional': 'Username (optional)',
   'cred.usernamePlaceholder': 'Account name or e-mail',
-  'cred.secretLabel': 'Token or password',
+  'cred.secretTokenLabel': 'Token',
+  'cred.secretPasswordLabel': 'Password',
   'cred.secretKeep': 'A secret is already saved — leave blank to keep it',
   'cred.secretPlaceholder': 'Paste a token or password',
   'cred.method': 'Authentication',
@@ -790,9 +790,9 @@ export const zh: Record<GitWorktreeKey, string> = {
   'cred.presets': '常用平台',
   'cred.customPreset': '自定义域名',
   'cred.usernameLabel': '用户名',
-  'cred.usernameOptional': '用户名（可选）',
   'cred.usernamePlaceholder': '账号名或邮箱',
-  'cred.secretLabel': '令牌或密码',
+  'cred.secretTokenLabel': '令牌',
+  'cred.secretPasswordLabel': '密码',
   'cred.secretKeep': '已保存密钥，留空表示不修改',
   'cred.secretPlaceholder': '粘贴令牌或密码',
   'cred.method': '认证方式',

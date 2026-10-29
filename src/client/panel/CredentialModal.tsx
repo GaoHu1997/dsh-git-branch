@@ -56,7 +56,7 @@ export function CredentialModal(props: CredentialModalProps): JSX.Element {
   const [loadError, setLoadError] = useState<string | undefined>()
   const [host, setHost] = useState('')
   const [username, setUsername] = useState('')
-  const [method, setMethod] = useState<CredentialMethod>('token')
+  const [method, setMethod] = useState<CredentialMethod>('password')
   const [secret, setSecret] = useState('')
   const [seed, setSeed] = useState<EditorSeed>()
   const [formError, setFormError] = useState<string | undefined>()
@@ -88,7 +88,7 @@ export function CredentialModal(props: CredentialModalProps): JSX.Element {
     setSeed(next)
     setHost(next === undefined ? '' : next.host)
     setUsername(next === undefined ? '' : next.username)
-    setMethod(next === undefined ? 'token' : next.method)
+    setMethod(next === undefined ? 'password' : next.method)
     setSecret('')
     setFormError(undefined)
     setConfirmHost(undefined)
@@ -116,7 +116,7 @@ export function CredentialModal(props: CredentialModalProps): JSX.Element {
       }
       applyEditor(undefined)
       setHost(preset)
-      setMethod('token')
+      setMethod('password')
     },
     [applyEditor, entries],
   )
@@ -280,28 +280,8 @@ export function CredentialModal(props: CredentialModalProps): JSX.Element {
                 />
               </div>
               <div className={css.formField}>
-                <label className={css.formLabel} htmlFor="git-credential-username">
-                  {method === 'token' ? t('cred.usernameOptional') : t('cred.usernameLabel')}
-                </label>
-                <input
-                  id="git-credential-username"
-                  className={css.formInput}
-                  value={username}
-                  placeholder={t('cred.usernamePlaceholder')}
-                  onChange={event => setUsername(event.target.value)}
-                />
-              </div>
-              <div className={css.formField}>
                 <span className={css.formLabel}>{t('cred.method')}</span>
                 <div className={css.credMethodRow}>
-                  <button
-                    type="button"
-                    aria-pressed={method === 'token'}
-                    className={method === 'token' ? css.credMethodOn : css.credMethod}
-                    onClick={() => setMethod('token')}
-                  >
-                    {t('cred.methodToken')}
-                  </button>
                   <button
                     type="button"
                     aria-pressed={method === 'password'}
@@ -310,14 +290,40 @@ export function CredentialModal(props: CredentialModalProps): JSX.Element {
                   >
                     {t('cred.methodPassword')}
                   </button>
+                  <button
+                    type="button"
+                    aria-pressed={method === 'token'}
+                    className={method === 'token' ? css.credMethodOn : css.credMethod}
+                    onClick={() => setMethod('token')}
+                  >
+                    {t('cred.methodToken')}
+                  </button>
                 </div>
               </div>
+              {/* A password pair needs a login name; a token authenticates on
+                * its own, so the field is absent rather than merely optional. */}
+              {method === 'password'
+                ? (
+                  <div className={css.formField}>
+                    <label className={css.formLabel} htmlFor="git-credential-username">{t('cred.usernameLabel')}</label>
+                    <input
+                      id="git-credential-username"
+                      className={css.formInput}
+                      value={username}
+                      placeholder={t('cred.usernamePlaceholder')}
+                      onChange={event => setUsername(event.target.value)}
+                    />
+                  </div>
+                )
+                : null}
               <div className={css.formField}>
                 <div className={css.credFieldHead}>
-                  <label className={css.formLabel} htmlFor="git-credential-secret">{t('cred.secretLabel')}</label>
-                  {tokenPage === undefined
-                    ? null
-                    : <a className={css.credLink} href={tokenPage} target="_blank" rel="noreferrer">{t('cred.getToken')}</a>}
+                  <label className={css.formLabel} htmlFor="git-credential-secret">
+                    {method === 'token' ? t('cred.secretTokenLabel') : t('cred.secretPasswordLabel')}
+                  </label>
+                  {method === 'token' && tokenPage !== undefined
+                    ? <a className={css.credLink} href={tokenPage} target="_blank" rel="noreferrer">{t('cred.getToken')}</a>
+                    : null}
                 </div>
                 <input
                   id="git-credential-secret"
