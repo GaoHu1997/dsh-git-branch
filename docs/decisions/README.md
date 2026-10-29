@@ -46,3 +46,4 @@
 - [0027 — 标签动作不再占用工作区 busy 闸门](0027-tag-verbs-leave-worktree-busy-gate.md)
 - [0028 — 发布 v1.0.8 补丁版本](0028-release-v1.0.8.md)
 - [0029 — AI 可用的带凭据 Git 网络工具（git_network）](0029-ai-network-credentials-tool.md)
+- [0030 — 发布 v1.0.9 补丁版本](0030-release-v1.0.9.md)
