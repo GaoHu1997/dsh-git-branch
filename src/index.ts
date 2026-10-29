@@ -21,6 +21,7 @@ import {
   type LlmStreamRuntime, type RouteDeps, type RouteOutcome,
 } from './routes.js'
 import { validateRootDir } from './settings.js'
+import { gitNetworkTool } from './network-tool.js'
 import { gitCredentialsTool } from './tool.js'
 import { ROUTE_AI_COMMIT_MESSAGE, ROUTE_BRANCH, ROUTE_BRANCH_DELETE, ROUTE_BRANCH_RENAME, ROUTE_CHANGES, ROUTE_COMMIT, ROUTE_COMMIT_FILES, ROUTE_CREDENTIALS, ROUTE_CREDENTIALS_DELETE, ROUTE_CREDENTIALS_OAUTH_POLL, ROUTE_CREDENTIALS_OAUTH_START, ROUTE_CREDENTIALS_SAVE, ROUTE_ENSURE_DIRECTORY, ROUTE_EXISTS, ROUTE_FETCH, ROUTE_GROUP, ROUTE_INSPECT, ROUTE_LOG, ROUTE_PUSH, ROUTE_PURGE, ROUTE_REMOTE, ROUTE_REMOTES, ROUTE_REMOVE, ROUTE_STAGE, ROUTE_STATUS, ROUTE_SWITCH, ROUTE_TAG, ROUTE_TAG_PUSH, ROUTE_UPDATE, ROUTE_WORKTREE, ROUTE_WORKTREES_ALL } from './wire.js'
 
@@ -234,6 +235,16 @@ export function apply(ctx: Context, config: Config = {}): void {
     toolsCtx.effect(
       () => tools.register(gitCredentialsTool({ home: () => homedir(), envHome: () => process.env.DSH_HOME })),
       'git-worktree: git_credentials tool',
+    )
+    // The panel routes are the only other place that injects the stored
+    // credentials; a model running `git push` through the shell would go out
+    // as the machine's helper account instead. This tool runs one network
+    // subcommand with the same `-c http.<url>.extraHeader` prefix, so the
+    // session can authenticate as the configured account without the secret
+    // ever entering the conversation.
+    toolsCtx.effect(
+      () => tools.register(gitNetworkTool({ home: () => homedir(), envHome: () => process.env.DSH_HOME })),
+      'git-worktree: git_network tool',
     )
   })
 
