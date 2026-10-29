@@ -336,7 +336,7 @@ export function CredentialModal(props: CredentialModalProps): JSX.Element {
               <div className={css.formError}>{formError ?? ''}</div>
             </div>
             <div className={css.credFooter}>
-              <Button size="sm" variant="ghost" onClick={closeEditor}>{t('cancel')}</Button>
+              <Button size="sm" variant="ghost" className={css.credCancel} onClick={closeEditor}>{t('cancel')}</Button>
               <Button size="sm" variant="primary" disabled={busy} onClick={() => void save()}>
                 {busy ? t('cred.saving') : t('cred.save')}
               </Button>

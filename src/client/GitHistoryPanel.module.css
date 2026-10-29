@@ -1343,14 +1343,22 @@
   text-decoration: underline;
 }
 
-/* The editor's action row: cancel on the left, save on the right, only while
- * the form itself is open. */
+/* The editor's action row: both actions sit on the right, cancel nearest the
+ * form, save outermost. Only while the form itself is open. */
 .credFooter {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-end;
   align-items: center;
   gap: 6px;
   margin-top: 10px;
+}
+
+/* Cancel is a bare text action: no stroke, no fill, so it reads as the
+ * quieter of the two rather than as a second control of equal weight. */
+.credCancel {
+  border: none;
+  background: transparent;
+  box-shadow: none;
 }
 
 .credTop {
