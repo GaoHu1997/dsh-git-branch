@@ -760,6 +760,9 @@ export type CredentialOAuthPollResult =
   | { status: 'pending' }
   /** GitHub asked the client to back off; the dialog doubles its interval. */
   | { status: 'slow_down' }
+  /** The endpoint was unreachable for this poll; the grant is still valid, so
+   * the dialog keeps polling and only gives up after repeated failures. */
+  | { status: 'network'; message: string }
   | { status: 'done'; credentials: CredentialEntryView[] }
 
 /** One configured remote. */

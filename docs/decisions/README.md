@@ -42,3 +42,4 @@
 - [0023 — 令牌免用户名与 AI 可读的密钥工具](0023-token-without-username-and-credentials-tool.md)
 - [0024 — 凭据表单的 IDEA 式浏览器授权与令牌创建入口](0024-credentials-browser-sign-in.md)
 - [0025 — 远程对话框改用密钥对话框的折叠编辑器范式](0025-remotes-modal-collapsed-editor.md)
+- [0026 — 凭据表单以浏览器登录为主路径，轮询网络抖动不再终止登录](0026-credential-browser-first-and-poll-retry.md)

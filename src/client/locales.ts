@@ -232,14 +232,12 @@ export type GitWorktreeKey =
   | 'cred.hostPlaceholder'
   | 'cred.presets'
   | 'cred.customPreset'
-  | 'cred.usernameLabel'
-  | 'cred.usernamePlaceholder'
   | 'cred.secretTokenLabel'
-  | 'cred.secretPasswordLabel'
   | 'cred.secretKeep'
   | 'cred.secretPlaceholder'
   | 'cred.method'
   | 'cred.methodToken'
+  | 'cred.methodBrowser'
   | 'cred.methodPassword'
   | 'cred.getToken'
   | 'cred.add'
@@ -255,16 +253,17 @@ export type GitWorktreeKey =
   | 'cred.loadFailed'
   | 'cred.hostInvalid'
   | 'cred.hostEmpty'
-  | 'cred.usernameEmpty'
   | 'cred.secretEmpty'
   | 'cred.connect'
   | 'cred.connecting'
+  | 'cred.browserHint'
   | 'cred.deviceCode'
   | 'cred.deviceHint'
   | 'cred.deviceWaiting'
   | 'cred.deviceExpired'
   | 'cred.deviceDenied'
   | 'cred.deviceFailed'
+  | 'cred.deviceNetwork'
   | 'cred.createToken'
   | 'panel.remotes'
   | 'remotes.title'
@@ -519,15 +518,13 @@ export const en: Record<GitWorktreeKey, string> = {
   'cred.hostPlaceholder': 'github.com',
   'cred.presets': 'Common hosts',
   'cred.customPreset': 'Custom host',
-  'cred.usernameLabel': 'Username',
-  'cred.usernamePlaceholder': 'Account name or e-mail',
   'cred.secretTokenLabel': 'Token',
-  'cred.secretPasswordLabel': 'Password',
   'cred.secretKeep': 'A secret is already saved — leave blank to keep it',
-  'cred.secretPlaceholder': 'Paste a token or password',
+  'cred.secretPlaceholder': 'Paste a personal access token',
   'cred.method': 'Authentication',
   'cred.methodToken': 'Token',
-  'cred.methodPassword': 'Username and password',
+  'cred.methodBrowser': 'Browser sign-in',
+  'cred.methodPassword': 'Password',
   'cred.getToken': 'Get a token',
   'cred.add': 'Add credential',
   'cred.edit': 'Edit',
@@ -542,16 +539,17 @@ export const en: Record<GitWorktreeKey, string> = {
   'cred.loadFailed': 'Could not read the credential store',
   'cred.hostInvalid': 'Enter a host such as github.com',
   'cred.hostEmpty': 'Enter a host',
-  'cred.usernameEmpty': 'Enter a username',
-  'cred.secretEmpty': 'Enter a token or password for a new host',
-  'cred.connect': 'Connect',
-  'cred.connecting': 'Connecting…',
+  'cred.secretEmpty': 'Enter a token for a new host',
+  'cred.connect': 'Sign in with browser',
+  'cred.connecting': 'Signing in…',
+  'cred.browserHint': 'Approve access in the browser window; the token is saved for this host automatically.',
   'cred.deviceCode': 'Verification code',
   'cred.deviceHint': 'Enter this code in the browser window that just opened',
   'cred.deviceWaiting': 'Waiting for approval…',
   'cred.deviceExpired': 'The code expired — start the sign-in again',
   'cred.deviceDenied': 'The sign-in was denied',
   'cred.deviceFailed': 'The browser sign-in failed: {error}',
+  'cred.deviceNetwork': 'Could not reach {host} — check your network or proxy and try again',
   'cred.createToken': 'Create',
   'panel.remotes': 'Remotes',
   'remotes.title': 'Remote addresses',
@@ -807,15 +805,13 @@ export const zh: Record<GitWorktreeKey, string> = {
   'cred.hostPlaceholder': 'github.com',
   'cred.presets': '常用平台',
   'cred.customPreset': '自定义域名',
-  'cred.usernameLabel': '用户名',
-  'cred.usernamePlaceholder': '账号名或邮箱',
   'cred.secretTokenLabel': '令牌',
-  'cred.secretPasswordLabel': '密码',
   'cred.secretKeep': '已保存密钥，留空表示不修改',
-  'cred.secretPlaceholder': '粘贴令牌或密码',
+  'cred.secretPlaceholder': '粘贴个人访问令牌',
   'cred.method': '认证方式',
   'cred.methodToken': '令牌',
-  'cred.methodPassword': '账号密码',
+  'cred.methodBrowser': '浏览器登录',
+  'cred.methodPassword': '密码',
   'cred.getToken': '获取令牌',
   'cred.add': '新增密钥',
   'cred.edit': '编辑',
@@ -830,16 +826,17 @@ export const zh: Record<GitWorktreeKey, string> = {
   'cred.loadFailed': '读取密钥失败',
   'cred.hostInvalid': '请输入类似 github.com 的域名',
   'cred.hostEmpty': '请输入域名',
-  'cred.usernameEmpty': '请输入用户名',
-  'cred.secretEmpty': '新域名必须填写令牌或密码',
-  'cred.connect': '连接',
-  'cred.connecting': '正在连接…',
+  'cred.secretEmpty': '新域名必须填写令牌',
+  'cred.connect': '点击跳转登录',
+  'cred.connecting': '正在跳转…',
+  'cred.browserHint': '在浏览器窗口中完成授权，成功后会自动保存该域名的令牌。',
   'cred.deviceCode': '验证码',
   'cred.deviceHint': '在刚打开的浏览器窗口输入此验证码',
   'cred.deviceWaiting': '等待授权中…',
-  'cred.deviceExpired': '验证码已过期，请重新连接',
+  'cred.deviceExpired': '验证码已过期，请重新登录',
   'cred.deviceDenied': '授权已被拒绝',
   'cred.deviceFailed': '浏览器授权失败：{error}',
+  'cred.deviceNetwork': '无法连接 {host}，请检查网络或代理后重试',
   'cred.createToken': '创建',
   'panel.remotes': '管理远程',
   'remotes.title': '远程地址',

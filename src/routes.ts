@@ -1435,6 +1435,13 @@ export async function handleCredentialsOAuthPoll(deps: RouteDeps, body: unknown)
     const backoff: CredentialOAuthPollResult = { status: 'slow_down' }
     return { status: 200, body: backoff }
   }
+  if (poll.status === 'network') {
+    // Not a failure: the grant is untouched, so the dialog retries instead of
+    // throwing away a sign-in the user may already have approved. The client
+    // decides when repeated failures become an error.
+    const retry: CredentialOAuthPollResult = { status: 'network', message: poll.message }
+    return { status: 200, body: retry }
+  }
   if (poll.status !== 'token') return fail(400, poll.message)
   const secretIssue = credentialSecretIssue(poll.token)
   if (secretIssue !== undefined) return fail(502, 'the sign-in returned an unusable token')

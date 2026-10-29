@@ -174,8 +174,12 @@ describe('pollDeviceFlow', () => {
     })
   })
 
-  it('rejects a dead connection', async () => {
-    await expect(pollDeviceFlow(brokenFetch(), 'github.com', 'c', 'd')).rejects.toThrow(/could not be reached/)
+  it('reports a dead connection as retryable network trouble', async () => {
+    // A dropped poll says nothing about the grant: the dialog retries instead
+    // of ending a sign-in the user may already have approved.
+    const poll = await pollDeviceFlow(brokenFetch(), 'github.com', 'c', 'd')
+    expect(poll.status).toBe('network')
+    expect(poll).toEqual({ status: 'network', message: expect.stringContaining('could not be reached') })
   })
 })
 
@@ -331,10 +335,12 @@ describe('handleCredentialsOAuthPoll', () => {
     expect(errorText(outcome)).toContain('user denied')
   })
 
-  it('surfaces a poll network failure as 502', async () => {
+  it('reports a poll network failure as retryable, not as a failure', async () => {
     const outcome = await handleCredentialsOAuthPoll(deps({ fetchImpl: brokenFetch() }), { host: 'github.com', deviceCode: 'd' })
-    expect(outcome.status).toBe(502)
-    expect(errorText(outcome)).toContain('could not poll the browser sign-in')
+    expect(outcome.status).toBe(200)
+    const body = outcome.body as { status: string; message: string }
+    expect(body.status).toBe('network')
+    expect(body.message).toContain('could not be reached')
   })
 
   it('surfaces a corrupt store as 500', async () => {

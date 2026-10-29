@@ -14,12 +14,18 @@
  * here. Nothing in this file imports `../../credentials.ts` — that module
  * touches node:fs, which has no place in the browser bundle.
  *
+ * Authentication has two paths and no password pair: device-flow hosts open
+ * the browser (the token lands host-side, so the dialog only sees the mask),
+ * every other host takes a pasted token. GitHub retired password auth in
+ * 2021 and GitLab/Gitee expect a PAT, so a username/password form only
+ * collected credentials the hosts reject.
+ *
  * @module git-worktree/client/panel/CredentialModal
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { CredentialEntryView, CredentialMethod } from '../../wire.ts'
+import type { CredentialEntryView } from '../../wire.ts'
 import { BROWSER_SIGN_IN_HOSTS } from '../../wire.ts'
 import { requestCredentials, requestDeleteCredential, requestOAuthPoll, requestOAuthStart, requestSaveCredential } from '../api.ts'
 import type { GitPanelTranslator } from '../panel-types.ts'
@@ -40,6 +46,12 @@ const TOKEN_PAGES: Readonly<Record<string, string>> = {
 /** One open editor: which stored host it rewrites (undefined = new host). */
 type EditorSeed = CredentialEntryView | undefined
 
+/** The two authentication paths the editor offers: an interactive browser
+ * sign-in (device flow), or a personal access token pasted by hand. Password
+ * pairs are gone — GitHub dropped them in 2021 and GitLab/Gitee expect a PAT,
+ * so a username/password form only invited credentials the hosts reject. */
+type AuthMode = 'browser' | 'token'
+
 /** The browser sign-in lifecycle the dialog renders. */
 type OAuthPhase = 'idle' | 'connecting' | 'waiting'
 
@@ -59,6 +71,11 @@ function delay(ms: number): Promise<void> {
   })
 }
 
+/** Consecutive unreachable polls before the dialog gives up. One TLS blip —
+ * the reset keep-alive connection this environment sees — must not discard a
+ * grant the user already approved in the browser. */
+const OAUTH_NETWORK_RETRY_LIMIT = 5
+
 /** The dialog's props: the panel translator, its toast queue, and close. */
 export interface CredentialModalProps {
   t: GitPanelTranslator
@@ -75,8 +92,7 @@ export function CredentialModal(props: CredentialModalProps): JSX.Element {
   const [loaded, setLoaded] = useState(false)
   const [loadError, setLoadError] = useState<string | undefined>()
   const [host, setHost] = useState('')
-  const [username, setUsername] = useState('')
-  const [method, setMethod] = useState<CredentialMethod>('password')
+  const [method, setMethod] = useState<AuthMode>('token')
   const [secret, setSecret] = useState('')
   const [seed, setSeed] = useState<EditorSeed>()
   const [formError, setFormError] = useState<string | undefined>()
@@ -119,8 +135,9 @@ export function CredentialModal(props: CredentialModalProps): JSX.Element {
     setOauth({ phase: 'idle' })
     setSeed(next)
     setHost(next === undefined ? '' : next.host)
-    setUsername(next === undefined ? '' : next.username)
-    setMethod(next === undefined ? 'password' : next.method)
+    // A stored password credential opens on the browser path — its password
+    // can no longer be edited here — while a token one opens on the field.
+    setMethod(next === undefined ? 'token' : next.method === 'token' ? 'token' : 'browser')
     setSecret('')
     setFormError(undefined)
     setConfirmHost(undefined)
@@ -137,6 +154,18 @@ export function CredentialModal(props: CredentialModalProps): JSX.Element {
     setEditorOpen(false)
   }, [applyEditor])
 
+  /** Switching path abandons whatever sign-in the other path was waiting on,
+   * so a late poll answer cannot rewrite the form the user now sees. */
+  const chooseMode = useCallback(
+    (next: AuthMode): void => {
+      if (next === method) return
+      oauthRun.current += 1
+      setOauth({ phase: 'idle' })
+      setMethod(next)
+    },
+    [method],
+  )
+
   // Presets fill the host and, when that host is already stored, switch the
   // editor into "edit" mode so the username and method arrive prefilled.
   const applyPreset = useCallback(
@@ -148,7 +177,9 @@ export function CredentialModal(props: CredentialModalProps): JSX.Element {
       }
       applyEditor(undefined)
       setHost(preset)
-      setMethod('password')
+      // A preset that can sign in through the browser opens on that path;
+      // every other host only ever has a token to offer.
+      setMethod(BROWSER_SIGN_IN_HOSTS.includes(preset) ? 'browser' : 'token')
     },
     [applyEditor, entries],
   )
@@ -156,6 +187,12 @@ export function CredentialModal(props: CredentialModalProps): JSX.Element {
   const normalizedHost = host.trim().toLowerCase()
   const existing = entries.find(entry => entry.host === normalizedHost)
   const tokenPage = TOKEN_PAGES[normalizedHost]
+  /** Device flow is only implemented for a few hosts; the rest get the token
+   * field alone, with no method switch that could promise a dead button. */
+  const browserSignIn = BROWSER_SIGN_IN_HOSTS.includes(normalizedHost)
+  /** The mode actually rendered: without device flow the token field wins,
+   * whatever stale selection the form was carrying. */
+  const authMode: AuthMode = browserSignIn ? method : 'token'
 
   const save = useCallback(async (): Promise<void> => {
     if (busy) return
@@ -164,22 +201,18 @@ export function CredentialModal(props: CredentialModalProps): JSX.Element {
       setFormError(t('cred.hostEmpty'))
       return
     }
-    // Token mode needs no username: a personal access token authenticates on
-    // its own and the host fills in a placeholder name. Only a password pair
-    // needs a real login name.
-    if (method === 'password' && username.trim() === '') {
-      setFormError(t('cred.usernameEmpty'))
-      return
-    }
     if (existing === undefined && trimmedSecret === '') {
       setFormError(t('cred.secretEmpty'))
       return
     }
     setBusy(true)
+    // Only tokens are saved by hand: a browser sign-in stores its own token
+    // host-side, which is why this editor no longer has username/password
+    // fields to carry.
     const result = await requestSaveCredential({
       host: host.trim(),
-      username: username.trim(),
-      method,
+      username: '',
+      method: 'token',
       ...(trimmedSecret === '' ? {} : { secret: trimmedSecret }),
     })
     setBusy(false)
@@ -191,7 +224,7 @@ export function CredentialModal(props: CredentialModalProps): JSX.Element {
     pushToast(t('cred.saved', { host: host.trim() }), 'success')
     applyEditor(undefined)
     setEditorOpen(false)
-  }, [applyEditor, busy, existing, host, method, pushToast, secret, t, username])
+  }, [applyEditor, busy, existing, host, pushToast, secret, t])
 
   /**
    * IDEA-style site sign-in: start a device-flow grant, open the verification
@@ -199,7 +232,7 @@ export function CredentialModal(props: CredentialModalProps): JSX.Element {
    * so the dialog only ever receives the refreshed masked list.
    */
   const connect = useCallback(async (): Promise<void> => {
-    if (busy || oauth.phase !== 'idle') return
+    if (busy || oauth.phase !== 'idle' || !browserSignIn) return
     const target = normalizedHost
     if (target === '') {
       setFormError(t('cred.hostEmpty'))
@@ -234,6 +267,7 @@ export function CredentialModal(props: CredentialModalProps): JSX.Element {
     setOauth({ phase: 'waiting', userCode: started.userCode, verificationUri: started.verificationUri })
     const deadline = Date.now() + started.expiresInSeconds * 1000
     let intervalMs = Math.max(started.intervalSeconds, 1) * 1000
+    let networkFailures = 0
     while (Date.now() < deadline) {
       await delay(intervalMs)
       if (oauthRun.current !== run) return
@@ -244,6 +278,19 @@ export function CredentialModal(props: CredentialModalProps): JSX.Element {
         setFormError(polled.error)
         return
       }
+      if (polled.status === 'network') {
+        // Transport trouble, not a verdict on the grant: keep polling, but
+        // stop after a run of failures so a dead link reports instead of
+        // spinning until the code expires.
+        networkFailures += 1
+        if (networkFailures >= OAUTH_NETWORK_RETRY_LIMIT) {
+          setOauth({ phase: 'idle' })
+          setFormError(t('cred.deviceNetwork', { host: target }))
+          return
+        }
+        continue
+      }
+      networkFailures = 0
       if (polled.status === 'pending') continue
       if (polled.status === 'slow_down') {
         // GitHub asked for fewer polls; back off without abandoning the grant.
@@ -260,7 +307,7 @@ export function CredentialModal(props: CredentialModalProps): JSX.Element {
     if (oauthRun.current !== run) return
     setOauth({ phase: 'idle' })
     setFormError(t('cred.deviceExpired'))
-  }, [applyEditor, busy, normalizedHost, oauth.phase, pushToast, t])
+  }, [applyEditor, browserSignIn, busy, normalizedHost, oauth.phase, pushToast, t])
 
   const remove = useCallback(
     async (target: string): Promise<void> => {
@@ -380,86 +427,75 @@ export function CredentialModal(props: CredentialModalProps): JSX.Element {
                   onChange={event => setHost(event.target.value)}
                 />
               </div>
-              <div className={css.formField}>
-                <span className={css.formLabel}>{t('cred.method')}</span>
-                <div className={css.credMethodRow}>
-                  <button
-                    type="button"
-                    aria-pressed={method === 'password'}
-                    className={method === 'password' ? css.credMethodOn : css.credMethod}
-                    onClick={() => setMethod('password')}
-                  >
-                    {t('cred.methodPassword')}
-                  </button>
-                  <button
-                    type="button"
-                    aria-pressed={method === 'token'}
-                    className={method === 'token' ? css.credMethodOn : css.credMethod}
-                    onClick={() => setMethod('token')}
-                  >
-                    {t('cred.methodToken')}
-                  </button>
-                </div>
-              </div>
-              {/* A password pair needs a login name; a token authenticates on
-                * its own, so the field is absent rather than merely optional. */}
-              {method === 'password'
+              {/* Device-flow hosts offer two paths; every other host only has
+                * a token, so the switch is not rendered at all. */}
+              {browserSignIn
                 ? (
                   <div className={css.formField}>
-                    <label className={css.formLabel} htmlFor="git-credential-username">{t('cred.usernameLabel')}</label>
-                    <input
-                      id="git-credential-username"
-                      className={css.formInput}
-                      value={username}
-                      placeholder={t('cred.usernamePlaceholder')}
-                      onChange={event => setUsername(event.target.value)}
-                    />
+                    <span className={css.formLabel}>{t('cred.method')}</span>
+                    <div className={css.credMethodRow}>
+                      <button
+                        type="button"
+                        aria-pressed={authMode === 'browser'}
+                        className={authMode === 'browser' ? css.credMethodOn : css.credMethod}
+                        onClick={() => chooseMode('browser')}
+                      >
+                        {t('cred.methodBrowser')}
+                      </button>
+                      <button
+                        type="button"
+                        aria-pressed={authMode === 'token'}
+                        className={authMode === 'token' ? css.credMethodOn : css.credMethod}
+                        onClick={() => chooseMode('token')}
+                      >
+                        {t('cred.methodToken')}
+                      </button>
+                    </div>
                   </div>
                 )
                 : null}
-              <div className={css.formField}>
-                <div className={css.credFieldHead}>
-                  <label className={css.formLabel} htmlFor="git-credential-secret">
-                    {method === 'token' ? t('cred.secretTokenLabel') : t('cred.secretPasswordLabel')}
-                  </label>
-                </div>
-                <div className={css.credSecretRow}>
-                  <input
-                    id="git-credential-secret"
-                    className={css.formInput}
-                    type="password"
-                    value={secret}
-                    placeholder={existing === undefined ? t('cred.secretPlaceholder') : t('cred.secretKeep')}
-                    onChange={event => setSecret(event.target.value)}
-                    onKeyDown={event => {
-                      if (event.key !== 'Enter') return
-                      event.preventDefault()
-                      void save()
-                    }}
-                  />
-                  {/* IDEA's token editor: a 「创建」 button at the end of the
-                    * field jumps straight to the host's token page. */}
-                  {method === 'token' && tokenPage !== undefined
-                    ? (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => window.open(tokenPage, '_blank', 'noopener,noreferrer')}
-                      >
-                        {t('cred.createToken')}
-                      </Button>
-                    )
-                    : null}
-                </div>
-              </div>
-              {/* IDEA's password editor: a 「连接」 button under the fields
-                * opens the browser and waits for the OAuth approval. */}
-              {method === 'password' && BROWSER_SIGN_IN_HOSTS.includes(normalizedHost)
+              {authMode === 'token'
                 ? (
+                  <div className={css.formField}>
+                    <div className={css.credFieldHead}>
+                      <label className={css.formLabel} htmlFor="git-credential-secret">{t('cred.secretTokenLabel')}</label>
+                    </div>
+                    <div className={css.credSecretRow}>
+                      <input
+                        id="git-credential-secret"
+                        className={css.formInput}
+                        type="password"
+                        value={secret}
+                        placeholder={existing === undefined ? t('cred.secretPlaceholder') : t('cred.secretKeep')}
+                        onChange={event => setSecret(event.target.value)}
+                        onKeyDown={event => {
+                          if (event.key !== 'Enter') return
+                          event.preventDefault()
+                          void save()
+                        }}
+                      />
+                      {/* IDEA's token editor: a 「创建」 button at the end of the
+                        * field jumps straight to the host's token page. */}
+                      {tokenPage !== undefined
+                        ? (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => window.open(tokenPage, '_blank', 'noopener,noreferrer')}
+                          >
+                            {t('cred.createToken')}
+                          </Button>
+                        )
+                        : null}
+                    </div>
+                  </div>
+                )
+                : (
                   <div className={css.credOAuth}>
+                    <span className={css.credDeviceHint}>{t('cred.browserHint')}</span>
                     {oauth.phase === 'idle'
                       ? (
-                        <Button size="sm" variant="outline" disabled={busy} onClick={() => void connect()}>
+                        <Button size="sm" variant="primary" disabled={busy} onClick={() => void connect()}>
                           {t('cred.connect')}
                         </Button>
                       )
@@ -482,15 +518,20 @@ export function CredentialModal(props: CredentialModalProps): JSX.Element {
                       )
                       : null}
                   </div>
-                )
-                : null}
+                )}
               <div className={css.formError}>{formError ?? ''}</div>
             </div>
             <div className={css.credFooter}>
               <Button size="sm" variant="outline" onClick={closeEditor}>{t('cancel')}</Button>
-              <Button size="sm" variant="primary" disabled={busy} onClick={() => void save()}>
-                {busy ? t('cred.saving') : t('cred.save')}
-              </Button>
+              {/* A browser sign-in stores its own token, so there is nothing
+                * for a 保存 button to carry in that mode. */}
+              {authMode === 'token'
+                ? (
+                  <Button size="sm" variant="primary" disabled={busy} onClick={() => void save()}>
+                    {busy ? t('cred.saving') : t('cred.save')}
+                  </Button>
+                )
+                : null}
             </div>
           </>
         )

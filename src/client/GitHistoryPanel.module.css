@@ -1356,7 +1356,8 @@
   min-width: 0;
 }
 
-/* The browser sign-in control slot under the password fields. */
+/* The browser sign-in block: the only control on that authentication path —
+ * no username or secret field sits above it any more. */
 .credOAuth {
   display: flex;
   flex-direction: column;

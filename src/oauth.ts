@@ -53,6 +53,9 @@ export type DeviceFlowPoll =
   | { status: 'token'; token: string }
   | { status: 'pending' }
   | { status: 'slow_down' }
+  /** The transport broke (DNS, TLS, reset keep-alive connection): the grant is
+   * untouched, so a poll loop should retry instead of ending the sign-in. */
+  | { status: 'network'; message: string }
   | { status: 'denied'; message: string }
   | { status: 'expired'; message: string }
   | { status: 'failed'; message: string }
@@ -76,6 +79,26 @@ export function isDeviceFlowHost(host: string): boolean {
 function readString(payload: Readonly<Record<string, unknown>>, key: string): string | undefined {
   const value = payload[key]
   return typeof value === 'string' && value !== '' ? value : undefined
+}
+
+/**
+ * A request that never reached the host: DNS failure, TLS interference, or a
+ * reset pooled connection. Unlike an OAuth error answer this says nothing
+ * about the grant, so the poll loop may retry it.
+ */
+export class DeviceFlowTransportError extends Error {
+  /** The endpoint that could not be reached. */
+  readonly url: string
+
+  /**
+   * @param url - the endpoint that could not be reached.
+   * @param cause - the underlying fetch failure.
+   */
+  constructor(url: string, cause: unknown) {
+    super(`${url} could not be reached (${cause instanceof Error ? cause.message : String(cause)})`)
+    this.name = 'DeviceFlowTransportError'
+    this.url = url
+  }
 }
 
 /**
@@ -104,7 +127,7 @@ async function postForm(
       signal: AbortSignal.timeout(timeoutMs),
     })
   } catch (error) {
-    throw new Error(`${url} could not be reached (${error instanceof Error ? error.message : String(error)})`)
+    throw new DeviceFlowTransportError(url, error)
   }
   let payload: unknown
   let parsed = false
@@ -178,18 +201,28 @@ export async function pollDeviceFlow(
   deviceCode: string,
   timeoutMs = 15_000,
 ): Promise<DeviceFlowPoll> {
-  const payload = await postForm(
-    fetchImpl,
-    `https://${host}/login/oauth/access_token`,
-    {
-      client_id: clientId,
-      device_code: deviceCode,
-      grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
-    },
-    timeoutMs,
-    // A pending grant is a 400 with an OAuth error body, not a failure.
-    true,
-  )
+  let payload: Record<string, unknown>
+  try {
+    payload = await postForm(
+      fetchImpl,
+      `https://${host}/login/oauth/access_token`,
+      {
+        client_id: clientId,
+        device_code: deviceCode,
+        grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+      },
+      timeoutMs,
+      // A pending grant is a 400 with an OAuth error body, not a failure.
+      true,
+    )
+  } catch (error) {
+    // A dropped connection says nothing about the grant: report it as a
+    // retryable answer so one blip cannot end a sign-in the user already
+    // approved in the browser. Any other failure (malformed body, HTTP 5xx)
+    // still throws and surfaces as a route error.
+    if (error instanceof DeviceFlowTransportError) return { status: 'network', message: error.message }
+    throw error
+  }
   const token = readString(payload, 'access_token')
   if (token !== undefined) return { status: 'token', token }
   const code = readString(payload, 'error') ?? 'unknown_error'
