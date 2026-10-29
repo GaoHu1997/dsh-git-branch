@@ -60,6 +60,12 @@ interface PanelToast {
   tone: 'success' | 'error'
 }
 
+/** What one guarded verb is allowed to claim of the panel's busy UI:
+ * `'section'` = the working-tree gate every section honours (the commit box
+ * turns its primary button into 「提交中…」), `'repo'` = a repository ref
+ * (tags) or a remote ref only, which must leave that gate alone. */
+type GuardScope = 'section' | 'repo'
+
 /** What the topbar refresh button drives (the data owner holds the loader). */
 export interface GitHistoryPanelDataHandle {
   refresh: () => void
@@ -164,21 +170,31 @@ const GitHistoryPanelData = forwardRef<GitHistoryPanelDataHandle, {
 
   const repo = status !== null && status.repo ? status : null
 
-  /** Run one mutating verb with the section-busy guard and error toast.
+  /** Run one mutating verb with the error toast and the cross-surface notice.
    * Mutations refresh through `loadAll` so their re-read bumps the request
    * sequence — an older in-flight snapshot can never land over the fresh
    * post-mutation state. A SUCCESS also emits the cross-surface notice so
    * the composer chip drops the branch git just left (stage toggles ride
-   * along — one extra idempotent /status beats per-verb wiring). */
-  const runGuarded = useCallback(async (verb: () => Promise<void>): Promise<void> => {
-    setSectionBusy(true)
+   * along — one extra idempotent /status beats per-verb wiring).
+   *
+   * `scope` names what the verb touches: `'section'` (default) claims the
+   * working-tree busy gate — the commit box's primary button reads
+   * 「提交中…」 while it is on. A tag verb (create or push) passes `'repo'`:
+   * it neither reads nor writes the working tree, so lighting that gate
+   * would report a commit that is not happening. */
+  const runGuarded = useCallback(async (
+    verb: () => Promise<void>,
+    scope: GuardScope = 'section',
+  ): Promise<void> => {
+    const section = scope === 'section'
+    if (section) setSectionBusy(true)
     try {
       await verb()
       emitGitMutated()
     } catch (error) {
       pushToast(t('errorGeneric', { message: failureText(error) }), 'error')
     } finally {
-      setSectionBusy(false)
+      if (section) setSectionBusy(false)
     }
   }, [pushToast, t])
 
@@ -378,14 +394,16 @@ const GitHistoryPanelData = forwardRef<GitHistoryPanelDataHandle, {
 
   /** Tag one commit. Runs against the repository (a tag is a repository-wide
    * ref), so the history card can tag a commit that no checkout has. Only
-   * local: pushing tags is a release step, not a side effect of a right-click. */
+   * local: pushing tags is a release step, not a side effect of a right-click.
+   * `'repo'`: a tag write leaves the working tree untouched — it must not
+   * turn the commit box's primary button into 「提交中…」. */
   const onCreateTag = useCallback((name: string, target: string, message: string): void => {
     void runGuarded(async () => {
       const result = await requestCreateTag(cwd, name, target, message)
       if (!result.ok) throw new Error(result.error)
       pushToast(t('panel.tagDone', { tag: result.tag }), 'success')
       await loadAll()
-    })
+    }, 'repo')
   }, [cwd, loadAll, pushToast, runGuarded, t])
 
   /** Publish ONE local tag. Its own verb, apart from the branch push: `git
@@ -402,7 +420,7 @@ const GitHistoryPanelData = forwardRef<GitHistoryPanelDataHandle, {
           : t('panel.tagPushUpToDate', { tag: result.tag, remote: result.remote }),
         'success',
       )
-    })
+    }, 'repo')
   }, [cwd, pushToast, runGuarded, t])
 
   const onToggleCommit = useCallback((hash: string): void => {
