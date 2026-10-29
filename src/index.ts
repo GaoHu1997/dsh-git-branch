@@ -17,12 +17,12 @@ import type {} from '@deepseek-ai/dsh-settings'
 import { childProcessExec } from './git.js'
 import { ACCEL_DEFAULT_URL, accelerateUrlError } from './normalize.js'
 import {
-  handleCredentials, handleCredentialsDelete, handleCredentialsSave, handleRemote, handleRemotes, handleAiCommitMessage, handleChanges, handleCommit, handleCommitFiles, handleCreateBranch, handleCreateTag, handleCreateWorktree, handleDeleteBranch, handleEnsureDirectory, handleFetch, handleGroupWorktrees, handleInspectWorktree, handleLog, handlePathExists, handlePurgeDirectory, handlePushTag, handleRemoveWorktree, handleRenameBranch, handleStage, handleStatus, handleSwitch, handleUpdate, handlePush, handleWorktreesAll,
+  handleCredentials, handleCredentialsDelete, handleCredentialsOAuthPoll, handleCredentialsOAuthStart, handleCredentialsSave, handleRemote, handleRemotes, handleAiCommitMessage, handleChanges, handleCommit, handleCommitFiles, handleCreateBranch, handleCreateTag, handleCreateWorktree, handleDeleteBranch, handleEnsureDirectory, handleFetch, handleGroupWorktrees, handleInspectWorktree, handleLog, handlePathExists, handlePurgeDirectory, handlePushTag, handleRemoveWorktree, handleRenameBranch, handleStage, handleStatus, handleSwitch, handleUpdate, handlePush, handleWorktreesAll,
   type LlmStreamRuntime, type RouteDeps, type RouteOutcome,
 } from './routes.js'
 import { validateRootDir } from './settings.js'
 import { gitCredentialsTool } from './tool.js'
-import { ROUTE_AI_COMMIT_MESSAGE, ROUTE_BRANCH, ROUTE_BRANCH_DELETE, ROUTE_BRANCH_RENAME, ROUTE_CHANGES, ROUTE_COMMIT, ROUTE_COMMIT_FILES, ROUTE_CREDENTIALS, ROUTE_CREDENTIALS_DELETE, ROUTE_CREDENTIALS_SAVE, ROUTE_ENSURE_DIRECTORY, ROUTE_EXISTS, ROUTE_FETCH, ROUTE_GROUP, ROUTE_INSPECT, ROUTE_LOG, ROUTE_PUSH, ROUTE_PURGE, ROUTE_REMOTE, ROUTE_REMOTES, ROUTE_REMOVE, ROUTE_STAGE, ROUTE_STATUS, ROUTE_SWITCH, ROUTE_TAG, ROUTE_TAG_PUSH, ROUTE_UPDATE, ROUTE_WORKTREE, ROUTE_WORKTREES_ALL } from './wire.js'
+import { ROUTE_AI_COMMIT_MESSAGE, ROUTE_BRANCH, ROUTE_BRANCH_DELETE, ROUTE_BRANCH_RENAME, ROUTE_CHANGES, ROUTE_COMMIT, ROUTE_COMMIT_FILES, ROUTE_CREDENTIALS, ROUTE_CREDENTIALS_DELETE, ROUTE_CREDENTIALS_OAUTH_POLL, ROUTE_CREDENTIALS_OAUTH_START, ROUTE_CREDENTIALS_SAVE, ROUTE_ENSURE_DIRECTORY, ROUTE_EXISTS, ROUTE_FETCH, ROUTE_GROUP, ROUTE_INSPECT, ROUTE_LOG, ROUTE_PUSH, ROUTE_PURGE, ROUTE_REMOTE, ROUTE_REMOTES, ROUTE_REMOVE, ROUTE_STAGE, ROUTE_STATUS, ROUTE_SWITCH, ROUTE_TAG, ROUTE_TAG_PUSH, ROUTE_UPDATE, ROUTE_WORKTREE, ROUTE_WORKTREES_ALL } from './wire.js'
 
 export const name = 'dsh-git-branch'
 
@@ -318,6 +318,10 @@ export function apply(ctx: Context, config: Config = {}): void {
     postRoute(ROUTE_CREDENTIALS, 'credentials', handleCredentials)
     postRoute(ROUTE_CREDENTIALS_SAVE, 'credentials-save', handleCredentialsSave)
     postRoute(ROUTE_CREDENTIALS_DELETE, 'credentials-delete', handleCredentialsDelete)
+    // Browser sign-in (GitHub device flow): start returns the one-time code,
+    // poll stores the token and answers the fresh masked list.
+    postRoute(ROUTE_CREDENTIALS_OAUTH_START, 'credentials-oauth-start', handleCredentialsOAuthStart)
+    postRoute(ROUTE_CREDENTIALS_OAUTH_POLL, 'credentials-oauth-poll', handleCredentialsOAuthPoll)
     postRoute(ROUTE_REMOTES, 'remotes', handleRemotes)
     postRoute(ROUTE_REMOTE, 'remote', handleRemote)
 

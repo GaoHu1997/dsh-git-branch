@@ -5,9 +5,9 @@
  */
 
 import type {
-  AiCommitMessageBody, AiCommitMessageResult, ChangesResult, CommitFilesResult, CommitResult, CreateBranchResult, CreateTagResult, CreateWorktreeResult, CredentialDeleteBody, CredentialSaveBody, CredentialsResult, DeleteBranchResult, EnsureDirectoryResult, FetchResult, GroupWorkspacesResult, InspectWorktreeResult, LogResult, PathExistsResult, PurgeDirectoryResult, PushTagResult, RemoteMutationBody, RemoveWorktreeResult, RemotesResult, RenameBranchResult, RepoStatus, RouteError, StageBody, StageResult, SwitchResult, UpdateResult, PushResult, WorktreesAllResult,
+  AiCommitMessageBody, AiCommitMessageResult, ChangesResult, CommitFilesResult, CommitResult, CreateBranchResult, CreateTagResult, CreateWorktreeResult, CredentialDeleteBody, CredentialOAuthPollBody, CredentialOAuthPollResult, CredentialOAuthStartBody, CredentialOAuthStartResult, CredentialSaveBody, CredentialsResult, DeleteBranchResult, EnsureDirectoryResult, FetchResult, GroupWorkspacesResult, InspectWorktreeResult, LogResult, PathExistsResult, PurgeDirectoryResult, PushTagResult, RemoteMutationBody, RemoveWorktreeResult, RemotesResult, RenameBranchResult, RepoStatus, RouteError, StageBody, StageResult, SwitchResult, UpdateResult, PushResult, WorktreesAllResult,
 } from '../wire.ts'
-import { ROUTE_AI_COMMIT_MESSAGE, ROUTE_BRANCH, ROUTE_BRANCH_DELETE, ROUTE_BRANCH_RENAME, ROUTE_CHANGES, ROUTE_COMMIT, ROUTE_COMMIT_FILES, ROUTE_CREDENTIALS, ROUTE_CREDENTIALS_DELETE, ROUTE_CREDENTIALS_SAVE, ROUTE_ENSURE_DIRECTORY, ROUTE_EXISTS, ROUTE_FETCH, ROUTE_GROUP, ROUTE_INSPECT, ROUTE_LOG, ROUTE_PUSH, ROUTE_PURGE, ROUTE_REMOTE, ROUTE_REMOTES, ROUTE_REMOVE, ROUTE_STAGE, ROUTE_STATUS, ROUTE_SWITCH, ROUTE_TAG, ROUTE_TAG_PUSH, ROUTE_UPDATE, ROUTE_WORKTREE, ROUTE_WORKTREES_ALL } from '../wire.ts'
+import { ROUTE_AI_COMMIT_MESSAGE, ROUTE_BRANCH, ROUTE_BRANCH_DELETE, ROUTE_BRANCH_RENAME, ROUTE_CHANGES, ROUTE_COMMIT, ROUTE_COMMIT_FILES, ROUTE_CREDENTIALS, ROUTE_CREDENTIALS_DELETE, ROUTE_CREDENTIALS_OAUTH_POLL, ROUTE_CREDENTIALS_OAUTH_START, ROUTE_CREDENTIALS_SAVE, ROUTE_ENSURE_DIRECTORY, ROUTE_EXISTS, ROUTE_FETCH, ROUTE_GROUP, ROUTE_INSPECT, ROUTE_LOG, ROUTE_PUSH, ROUTE_PURGE, ROUTE_REMOTE, ROUTE_REMOTES, ROUTE_REMOVE, ROUTE_STAGE, ROUTE_STATUS, ROUTE_SWITCH, ROUTE_TAG, ROUTE_TAG_PUSH, ROUTE_UPDATE, ROUTE_WORKTREE, ROUTE_WORKTREES_ALL } from '../wire.ts'
 
 /** One route call outcome: the parsed body, or the error envelope text. */
 type Call<T> = (T & { ok: true }) | { ok: false; error: string }
@@ -354,6 +354,26 @@ export function requestSaveCredential(body: CredentialSaveBody): Promise<Call<Cr
  */
 export function requestDeleteCredential(body: CredentialDeleteBody): Promise<Call<CredentialsResult>> {
   return post<CredentialsResult>(ROUTE_CREDENTIALS_DELETE, body)
+}
+
+/**
+ * Start a browser sign-in for ONE host (GitHub device flow). The answer
+ * carries the one-time user code the dialog shows and the verification page
+ * it opens.
+ * @param body - `{ host }`.
+ */
+export function requestOAuthStart(body: CredentialOAuthStartBody): Promise<Call<CredentialOAuthStartResult>> {
+  return post<CredentialOAuthStartResult>(ROUTE_CREDENTIALS_OAUTH_START, body)
+}
+
+/**
+ * Poll a started browser sign-in. Resolves `{ status: 'pending' }` until the
+ * user approves; then the token is stored host-side and the fresh masked
+ * list comes back (the token itself never reaches the browser).
+ * @param body - `{ host, deviceCode }`.
+ */
+export function requestOAuthPoll(body: CredentialOAuthPollBody): Promise<Call<CredentialOAuthPollResult>> {
+  return post<CredentialOAuthPollResult>(ROUTE_CREDENTIALS_OAUTH_POLL, body)
 }
 
 /**

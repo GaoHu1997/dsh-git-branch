@@ -257,6 +257,15 @@ export type GitWorktreeKey =
   | 'cred.hostEmpty'
   | 'cred.usernameEmpty'
   | 'cred.secretEmpty'
+  | 'cred.connect'
+  | 'cred.connecting'
+  | 'cred.deviceCode'
+  | 'cred.deviceHint'
+  | 'cred.deviceWaiting'
+  | 'cred.deviceExpired'
+  | 'cred.deviceDenied'
+  | 'cred.deviceFailed'
+  | 'cred.createToken'
   | 'panel.remotes'
   | 'remotes.title'
   | 'remotes.hint'
@@ -535,6 +544,15 @@ export const en: Record<GitWorktreeKey, string> = {
   'cred.hostEmpty': 'Enter a host',
   'cred.usernameEmpty': 'Enter a username',
   'cred.secretEmpty': 'Enter a token or password for a new host',
+  'cred.connect': 'Connect',
+  'cred.connecting': 'Connecting…',
+  'cred.deviceCode': 'Verification code',
+  'cred.deviceHint': 'Enter this code in the browser window that just opened',
+  'cred.deviceWaiting': 'Waiting for approval…',
+  'cred.deviceExpired': 'The code expired — start the sign-in again',
+  'cred.deviceDenied': 'The sign-in was denied',
+  'cred.deviceFailed': 'The browser sign-in failed: {error}',
+  'cred.createToken': 'Create',
   'panel.remotes': 'Remotes',
   'remotes.title': 'Remote addresses',
   'remotes.hint': 'Remotes belong to the whole repository and apply to every worktree of it.',
@@ -814,11 +832,20 @@ export const zh: Record<GitWorktreeKey, string> = {
   'cred.hostEmpty': '请输入域名',
   'cred.usernameEmpty': '请输入用户名',
   'cred.secretEmpty': '新域名必须填写令牌或密码',
+  'cred.connect': '连接',
+  'cred.connecting': '正在连接…',
+  'cred.deviceCode': '验证码',
+  'cred.deviceHint': '在刚打开的浏览器窗口输入此验证码',
+  'cred.deviceWaiting': '等待授权中…',
+  'cred.deviceExpired': '验证码已过期，请重新连接',
+  'cred.deviceDenied': '授权已被拒绝',
+  'cred.deviceFailed': '浏览器授权失败：{error}',
+  'cred.createToken': '创建',
   'panel.remotes': '管理远程',
   'remotes.title': '远程地址',
   'remotes.hint': '远程地址属于整个仓库，对该仓库的所有工作树生效。',
   'remotes.empty': '还没有配置远程地址',
-  'remotes.add': '添加远程',
+  'remotes.add': '新增远程',
   'remotes.nameLabel': '名称',
   'remotes.namePlaceholder': 'origin',
   'remotes.urlLabel': '地址',

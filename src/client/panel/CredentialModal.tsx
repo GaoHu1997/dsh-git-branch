@@ -17,10 +17,11 @@
  * @module git-worktree/client/panel/CredentialModal
  */
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { CredentialEntryView, CredentialMethod } from '../../wire.ts'
-import { requestCredentials, requestDeleteCredential, requestSaveCredential } from '../api.ts'
+import { BROWSER_SIGN_IN_HOSTS } from '../../wire.ts'
+import { requestCredentials, requestDeleteCredential, requestOAuthPoll, requestOAuthStart, requestSaveCredential } from '../api.ts'
 import type { GitPanelTranslator } from '../panel-types.ts'
 import css from '../GitHistoryPanel.module.css'
 
@@ -38,6 +39,25 @@ const TOKEN_PAGES: Readonly<Record<string, string>> = {
 
 /** One open editor: which stored host it rewrites (undefined = new host). */
 type EditorSeed = CredentialEntryView | undefined
+
+/** The browser sign-in lifecycle the dialog renders. */
+type OAuthPhase = 'idle' | 'connecting' | 'waiting'
+
+/** What the dialog knows while a browser sign-in runs. */
+interface OAuthState {
+  phase: OAuthPhase
+  /** The one-time code the user types on the opened verification page. */
+  userCode?: string
+  /** The verification page, kept as a fallback link while waiting. */
+  verificationUri?: string
+}
+
+/** One polling interval, kept as a promise so the loop stays sequential. */
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => {
+    setTimeout(resolve, ms)
+  })
+}
 
 /** The dialog's props: the panel translator, its toast queue, and close. */
 export interface CredentialModalProps {
@@ -67,6 +87,15 @@ export function CredentialModal(props: CredentialModalProps): JSX.Element {
    * and the row's 编辑 button re-opens it prefilled. Keeping the form out of
    * the DOM until it is asked for leaves the list as the modal's default. */
   const [editorOpen, setEditorOpen] = useState(false)
+  /** The browser sign-in currently shown under the password fields. */
+  const [oauth, setOauth] = useState<OAuthState>({ phase: 'idle' })
+  /** Generation counter: one bump abandons an in-flight poll loop (cancel,
+   * close, unmount), so a late answer cannot revive a closed editor. */
+  const oauthRun = useRef(0)
+
+  useEffect(() => () => {
+    oauthRun.current += 1
+  }, [])
 
   const load = useCallback(async (): Promise<void> => {
     const result = await requestCredentials()
@@ -85,6 +114,9 @@ export function CredentialModal(props: CredentialModalProps): JSX.Element {
   }, [load])
 
   const applyEditor = useCallback((next: EditorSeed): void => {
+    // Re-seeding the form abandons any browser sign-in it was showing.
+    oauthRun.current += 1
+    setOauth({ phase: 'idle' })
     setSeed(next)
     setHost(next === undefined ? '' : next.host)
     setUsername(next === undefined ? '' : next.username)
@@ -160,6 +192,75 @@ export function CredentialModal(props: CredentialModalProps): JSX.Element {
     applyEditor(undefined)
     setEditorOpen(false)
   }, [applyEditor, busy, existing, host, method, pushToast, secret, t, username])
+
+  /**
+   * IDEA-style site sign-in: start a device-flow grant, open the verification
+   * page, then poll until the user approves. The token is stored host-side,
+   * so the dialog only ever receives the refreshed masked list.
+   */
+  const connect = useCallback(async (): Promise<void> => {
+    if (busy || oauth.phase !== 'idle') return
+    const target = normalizedHost
+    if (target === '') {
+      setFormError(t('cred.hostEmpty'))
+      return
+    }
+    const run = ++oauthRun.current
+    setFormError(undefined)
+    setOauth({ phase: 'connecting' })
+    // Open the tab synchronously: after the await below the browser no longer
+    // treats the call as user-initiated and would block the popup, which
+    // matters most on the slow links this feature is meant to help with.
+    const tab = window.open('', '_blank')
+    const started = await requestOAuthStart({ host: target })
+    if (oauthRun.current !== run) {
+      tab?.close()
+      return
+    }
+    if (!started.ok) {
+      tab?.close()
+      setOauth({ phase: 'idle' })
+      setFormError(started.error)
+      return
+    }
+    const page = started.verificationUriComplete ?? started.verificationUri
+    if (tab === null || tab.closed) {
+      // The placeholder tab was blocked or closed; a plain open is the fallback.
+      window.open(page, '_blank', 'noopener,noreferrer')
+    } else {
+      tab.opener = null
+      tab.location.href = page
+    }
+    setOauth({ phase: 'waiting', userCode: started.userCode, verificationUri: started.verificationUri })
+    const deadline = Date.now() + started.expiresInSeconds * 1000
+    let intervalMs = Math.max(started.intervalSeconds, 1) * 1000
+    while (Date.now() < deadline) {
+      await delay(intervalMs)
+      if (oauthRun.current !== run) return
+      const polled = await requestOAuthPoll({ host: target, deviceCode: started.deviceCode })
+      if (oauthRun.current !== run) return
+      if (!polled.ok) {
+        setOauth({ phase: 'idle' })
+        setFormError(polled.error)
+        return
+      }
+      if (polled.status === 'pending') continue
+      if (polled.status === 'slow_down') {
+        // GitHub asked for fewer polls; back off without abandoning the grant.
+        intervalMs = Math.min(intervalMs * 2, 60_000)
+        continue
+      }
+      setEntries(polled.credentials)
+      setOauth({ phase: 'idle' })
+      applyEditor(undefined)
+      setEditorOpen(false)
+      pushToast(t('cred.saved', { host: target }), 'success')
+      return
+    }
+    if (oauthRun.current !== run) return
+    setOauth({ phase: 'idle' })
+    setFormError(t('cred.deviceExpired'))
+  }, [applyEditor, busy, normalizedHost, oauth.phase, pushToast, t])
 
   const remove = useCallback(
     async (target: string): Promise<void> => {
@@ -321,24 +422,68 @@ export function CredentialModal(props: CredentialModalProps): JSX.Element {
                   <label className={css.formLabel} htmlFor="git-credential-secret">
                     {method === 'token' ? t('cred.secretTokenLabel') : t('cred.secretPasswordLabel')}
                   </label>
+                </div>
+                <div className={css.credSecretRow}>
+                  <input
+                    id="git-credential-secret"
+                    className={css.formInput}
+                    type="password"
+                    value={secret}
+                    placeholder={existing === undefined ? t('cred.secretPlaceholder') : t('cred.secretKeep')}
+                    onChange={event => setSecret(event.target.value)}
+                    onKeyDown={event => {
+                      if (event.key !== 'Enter') return
+                      event.preventDefault()
+                      void save()
+                    }}
+                  />
+                  {/* IDEA's token editor: a 「创建」 button at the end of the
+                    * field jumps straight to the host's token page. */}
                   {method === 'token' && tokenPage !== undefined
-                    ? <a className={css.credLink} href={tokenPage} target="_blank" rel="noreferrer">{t('cred.getToken')}</a>
+                    ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => window.open(tokenPage, '_blank', 'noopener,noreferrer')}
+                      >
+                        {t('cred.createToken')}
+                      </Button>
+                    )
                     : null}
                 </div>
-                <input
-                  id="git-credential-secret"
-                  className={css.formInput}
-                  type="password"
-                  value={secret}
-                  placeholder={existing === undefined ? t('cred.secretPlaceholder') : t('cred.secretKeep')}
-                  onChange={event => setSecret(event.target.value)}
-                  onKeyDown={event => {
-                    if (event.key !== 'Enter') return
-                    event.preventDefault()
-                    void save()
-                  }}
-                />
               </div>
+              {/* IDEA's password editor: a 「连接」 button under the fields
+                * opens the browser and waits for the OAuth approval. */}
+              {method === 'password' && BROWSER_SIGN_IN_HOSTS.includes(normalizedHost)
+                ? (
+                  <div className={css.credOAuth}>
+                    {oauth.phase === 'idle'
+                      ? (
+                        <Button size="sm" variant="outline" disabled={busy} onClick={() => void connect()}>
+                          {t('cred.connect')}
+                        </Button>
+                      )
+                      : null}
+                    {oauth.phase === 'connecting'
+                      ? <span className={css.credDeviceHint}>{t('cred.connecting')}</span>
+                      : null}
+                    {oauth.phase === 'waiting'
+                      ? (
+                        <div className={css.credDevice}>
+                          <div className={css.credDeviceRow}>
+                            <span className={css.credDeviceCode}>{oauth.userCode ?? ''}</span>
+                            <a className={css.credLink} href={oauth.verificationUri} target="_blank" rel="noreferrer">
+                              {oauth.verificationUri}
+                            </a>
+                          </div>
+                          <span className={css.credDeviceHint}>{t('cred.deviceHint')}</span>
+                          <span className={css.credDeviceWaiting}>{t('cred.deviceWaiting')}</span>
+                        </div>
+                      )
+                      : null}
+                  </div>
+                )
+                : null}
               <div className={css.formError}>{formError ?? ''}</div>
             </div>
             <div className={css.credFooter}>

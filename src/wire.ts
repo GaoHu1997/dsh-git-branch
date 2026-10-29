@@ -92,6 +92,14 @@ export const ROUTE_CREDENTIALS_SAVE = `${ROUTE_PREFIX}/credentials-save`
 /** POST ROUTE_PREFIX/credentials-delete — forget one host credential. */
 export const ROUTE_CREDENTIALS_DELETE = `${ROUTE_PREFIX}/credentials-delete`
 
+/** POST ROUTE_PREFIX/credentials-oauth-start — begin a browser sign-in for
+ * one host (GitHub device flow); answers the one-time user code. */
+export const ROUTE_CREDENTIALS_OAUTH_START = `${ROUTE_PREFIX}/credentials-oauth-start`
+
+/** POST ROUTE_PREFIX/credentials-oauth-poll — poll a started browser sign-in;
+ * stores the token and answers the fresh masked list once the user approves. */
+export const ROUTE_CREDENTIALS_OAUTH_POLL = `${ROUTE_PREFIX}/credentials-oauth-poll`
+
 /** POST ROUTE_PREFIX/remotes — the repository's configured remotes. */
 export const ROUTE_REMOTES = `${ROUTE_PREFIX}/remotes`
 
@@ -669,6 +677,11 @@ export interface AiCommitMessageResult {
   message: string
 }
 
+/** Hosts whose browser sign-in the credential dialog offers. Mirrors the
+ * host-side device-flow support (`src/oauth.ts`); a shared constant keeps the
+ * browser list from drifting away from what the host can actually do. */
+export const BROWSER_SIGN_IN_HOSTS: readonly string[] = ['github.com']
+
 /** How a stored credential's secret is meant to be used. */
 export type CredentialMethod = 'token' | 'password'
 
@@ -710,6 +723,44 @@ export interface CredentialDeleteBody {
 
 /** POST credentials-delete response body: the updated masked list. */
 export type CredentialDeleteResult = CredentialsResult
+
+/** POST credentials-oauth-start request body. */
+export interface CredentialOAuthStartBody {
+  /** Remote host whose browser sign-in to start (must support device flow). */
+  host: string
+}
+
+/** POST credentials-oauth-start response body: what the dialog shows/opens. */
+export interface CredentialOAuthStartResult {
+  /** The short code to type on the verification page. */
+  userCode: string
+  /** Verification page without the code. */
+  verificationUri: string
+  /** Verification page with the code pre-filled, when the host returns one. */
+  verificationUriComplete?: string
+  /** Polling credential for {@link CredentialOAuthPollBody}. */
+  deviceCode: string
+  /** Minimum seconds between polls. */
+  intervalSeconds: number
+  /** Seconds until the grant expires. */
+  expiresInSeconds: number
+}
+
+/** POST credentials-oauth-poll request body. */
+export interface CredentialOAuthPollBody {
+  /** The host whose sign-in is being polled. */
+  host: string
+  /** The grant's `deviceCode` from the start call. */
+  deviceCode: string
+}
+
+/** POST credentials-oauth-poll response body: still waiting, or the fresh list
+ * once the token was stored (the token itself never crosses the wire). */
+export type CredentialOAuthPollResult =
+  | { status: 'pending' }
+  /** GitHub asked the client to back off; the dialog doubles its interval. */
+  | { status: 'slow_down' }
+  | { status: 'done'; credentials: CredentialEntryView[] }
 
 /** One configured remote. */
 export interface RemoteEntry {

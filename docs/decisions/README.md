@@ -40,3 +40,5 @@
 - [0021 — 全局按域名的 Git 密钥配置](0021-global-git-credentials.md)
 - [0022 — 面板内管理远程地址（含多个远程）](0022-remote-address-management.md)
 - [0023 — 令牌免用户名与 AI 可读的密钥工具](0023-token-without-username-and-credentials-tool.md)
+- [0024 — 凭据表单的 IDEA 式浏览器授权与令牌创建入口](0024-credentials-browser-sign-in.md)
+- [0025 — 远程对话框改用密钥对话框的折叠编辑器范式](0025-remotes-modal-collapsed-editor.md)

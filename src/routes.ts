@@ -9,10 +9,11 @@ import { runPostCreateCopy, type CopyFilesSeams } from './copy-files.js'
 import { authConfigArgs, credentialFilePath, createCredentialStore, credentialHostIssue, credentialSecretIssue, credentialUsernameIssue, maskSecret, normalizeCredentialHost, removeCredential, sortCredentials, upsertCredential, type CredentialStore, type GitCredential } from './credentials.js'
 import { appendWorktreeExclude, fsExcludeSeams, GitError, addRemote, addWorktree, addWorktreeCutout, collectAiDiff, commitFiles, commitIndex, createBranch, createTag, cutoutBranchName, deleteBranch, fetchAll, fsDirExists, inspectWorktree, isAbsoluteDir, isStageablePath, listRemotes, listTagNames, logHistory, probeRepo, probeWorkspaceGit, pushTag, removeRemote, removeWorktree, renameBranch, resolveBranch, resolvePushRemote, pushBranch, setRemoteUrl, stagePaths, switchBranch, updateBranch, workingChanges, type DirExists, type ExcludeSeams, type Exec } from './git.js'
 import { ACCEL_DEFAULT_URL, accelerateUrlError, isAbsoluteConfigPath, normalizeAccelerateUrl, remoteNameIssue, remoteUrlIssue, sanitizeBranchDir, type RemoteNameIssue, type RemoteUrlIssue } from './normalize.js'
+import { deviceFlowClientId, isDeviceFlowHost, pollDeviceFlow, startDeviceFlow, type DeviceFlowPoll } from './oauth.js'
 import { resolveRootDir } from './settings.js'
 import { COMMIT_MESSAGE_LIMIT } from './wire.js'
 import type {
-  AiCommitMessageBody, AiCommitMessageResult, ChangesBody, ChangesResult, CommitBody, CommitFilesBody, CommitFilesResult, CommitResult, CreateBranchBody, CreateBranchResult, CreateTagBody, CreateTagResult, CreateWorktreeBody, CreateWorktreeResult, CredentialDeleteBody, CredentialEntryView, CredentialSaveBody, CredentialsResult, DeleteBranchBody, DeleteBranchResult, EnsureDirectoryBody, EnsureDirectoryResult, FetchBody, FetchResult, GroupWorkspacesResult, InspectWorktreeBody, InspectWorktreeResult, LogBody, LogResult, PathExistsResult, PurgeDirectoryBody, PurgeDirectoryResult, PushTagBody, PushTagResult, RemoteAction, RemoveWorktreeBody, RemoveWorktreeResult, RemotesBody, RemotesResult, RemoteMutationBody, RenameBranchBody, RenameBranchResult, RepoStatus, RouteError, StageBody, StageResult, SwitchBody, SwitchResult, UpdateBody, UpdateResult, PushBody, PushResult, WorktreesAllResult,
+  AiCommitMessageBody, AiCommitMessageResult, ChangesBody, ChangesResult, CommitBody, CommitFilesBody, CommitFilesResult, CommitResult, CreateBranchBody, CreateBranchResult, CreateTagBody, CreateTagResult, CreateWorktreeBody, CreateWorktreeResult, CredentialDeleteBody, CredentialEntryView, CredentialOAuthPollBody, CredentialOAuthPollResult, CredentialOAuthStartBody, CredentialOAuthStartResult, CredentialSaveBody, CredentialsResult, DeleteBranchBody, DeleteBranchResult, EnsureDirectoryBody, EnsureDirectoryResult, FetchBody, FetchResult, GroupWorkspacesResult, InspectWorktreeBody, InspectWorktreeResult, LogBody, LogResult, PathExistsResult, PurgeDirectoryBody, PurgeDirectoryResult, PushTagBody, PushTagResult, RemoteAction, RemoveWorktreeBody, RemoveWorktreeResult, RemotesBody, RemotesResult, RemoteMutationBody, RenameBranchBody, RenameBranchResult, RepoStatus, RouteError, StageBody, StageResult, SwitchBody, SwitchResult, UpdateBody, UpdateResult, PushBody, PushResult, WorktreesAllResult,
 } from './wire.js'
 
 /** Everything the handlers need from the host half. */
@@ -38,6 +39,8 @@ export interface RouteDeps {
   excludeSeams?: ExcludeSeams
   /** Post-create file copy seams (tests substitute). */
   copyFilesSeams?: CopyFilesSeams
+  /** HTTP seam for the browser sign-in routes (absent = global fetch). */
+  fetchImpl?: typeof fetch
   /** Directory probe seam over fs.stat (true = exists AND is a directory);
    * tests substitute. */
   statDirectory?: (path: string) => Promise<boolean>
@@ -83,7 +86,7 @@ export async function fsMkdirRecursive(path: string): Promise<void> {
 /** One route outcome: HTTP status plus the JSON body. */
 export interface RouteOutcome {
   status: number
-  body: RepoStatus | CreateWorktreeResult | SwitchResult | CreateBranchResult | FetchResult | UpdateResult | GroupWorkspacesResult | InspectWorktreeResult | RemoveWorktreeResult | PathExistsResult | EnsureDirectoryResult | WorktreesAllResult | PurgeDirectoryResult | ChangesResult | StageResult | CommitResult | LogResult | CommitFilesResult | CreateTagResult | PushTagResult | AiCommitMessageResult | CredentialsResult | RemotesResult | RouteError
+  body: RepoStatus | CreateWorktreeResult | SwitchResult | CreateBranchResult | FetchResult | UpdateResult | GroupWorkspacesResult | InspectWorktreeResult | RemoveWorktreeResult | PathExistsResult | EnsureDirectoryResult | WorktreesAllResult | PurgeDirectoryResult | ChangesResult | StageResult | CommitResult | LogResult | CommitFilesResult | CreateTagResult | PushTagResult | AiCommitMessageResult | CredentialsResult | CredentialOAuthStartResult | CredentialOAuthPollResult | RemotesResult | RouteError
 }
 
 /** Uniform failure envelope. */
@@ -1357,6 +1360,97 @@ export async function handleCredentialsDelete(deps: RouteDeps, body: unknown): P
     await store.save(next)
     const result: CredentialsResult = { credentials: sortCredentials(next).map(credentialView) }
     return { status: 200, body: result }
+  } catch (error) {
+    return storeFailure(error)
+  }
+}
+
+/** The HTTP seam: the wired fake in tests, global fetch in production. */
+function fetchFor(deps: RouteDeps): typeof fetch {
+  return deps.fetchImpl ?? globalThis.fetch
+}
+
+/**
+ * POST /credentials-oauth-start — start a browser sign-in for ONE host
+ * (GitHub device flow). The answer carries a one-time user code and the
+ * polling credential; the dialog opens the verification page and polls
+ * /credentials-oauth-poll until the user approves.
+ * @param deps - host dependencies.
+ * @param body - parsed request body: `{ host }`.
+ */
+export async function handleCredentialsOAuthStart(deps: RouteDeps, body: unknown): Promise<RouteOutcome> {
+  const parsed = readBody<CredentialOAuthStartBody>(body, ['host'])
+  if (isOutcome(parsed)) return parsed
+  const host = normalizeCredentialHost(parsed.host)
+  if (host === undefined) {
+    return fail(400, credentialHostIssue(parsed.host) === 'empty'
+      ? '"host" must be non-empty'
+      : '"host" must be a remote host such as github.com')
+  }
+  if (!isDeviceFlowHost(host)) return fail(400, `browser sign-in is not available for "${host}"`)
+  try {
+    const grant = await startDeviceFlow(fetchFor(deps), host, deviceFlowClientId())
+    const result: CredentialOAuthStartResult = {
+      userCode: grant.userCode,
+      verificationUri: grant.verificationUri,
+      ...(grant.verificationUriComplete === undefined ? {} : { verificationUriComplete: grant.verificationUriComplete }),
+      deviceCode: grant.deviceCode,
+      intervalSeconds: grant.intervalSeconds,
+      expiresInSeconds: grant.expiresInSeconds,
+    }
+    return { status: 200, body: result }
+  } catch (error) {
+    return fail(502, `could not start the browser sign-in: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
+/**
+ * POST /credentials-oauth-poll — one poll of a started browser sign-in.
+ * A pending grant answers `{ status: 'pending' }` so the dialog keeps
+ * waiting; an approved grant is stored as a `token` credential for the host
+ * (the token itself never crosses the wire again) and the fresh masked list
+ * comes back.
+ * @param deps - host dependencies.
+ * @param body - parsed request body: `{ host, deviceCode }`.
+ */
+export async function handleCredentialsOAuthPoll(deps: RouteDeps, body: unknown): Promise<RouteOutcome> {
+  const parsed = readBody<CredentialOAuthPollBody>(body, ['host', 'deviceCode'])
+  if (isOutcome(parsed)) return parsed
+  const host = normalizeCredentialHost(parsed.host)
+  if (host === undefined) return fail(400, '"host" must be a remote host such as github.com')
+  if (!isDeviceFlowHost(host)) return fail(400, `browser sign-in is not available for "${host}"`)
+  const deviceCode = parsed.deviceCode.trim()
+  if (deviceCode === '') return fail(400, '"deviceCode" must be non-empty')
+  let poll: DeviceFlowPoll
+  try {
+    poll = await pollDeviceFlow(fetchFor(deps), host, deviceFlowClientId(), deviceCode)
+  } catch (error) {
+    return fail(502, `could not poll the browser sign-in: ${error instanceof Error ? error.message : String(error)}`)
+  }
+  if (poll.status === 'pending') {
+    const waiting: CredentialOAuthPollResult = { status: 'pending' }
+    return { status: 200, body: waiting }
+  }
+  if (poll.status === 'slow_down') {
+    const backoff: CredentialOAuthPollResult = { status: 'slow_down' }
+    return { status: 200, body: backoff }
+  }
+  if (poll.status !== 'token') return fail(400, poll.message)
+  const secretIssue = credentialSecretIssue(poll.token)
+  if (secretIssue !== undefined) return fail(502, 'the sign-in returned an unusable token')
+  try {
+    const store = credentialStore(deps)
+    const entries = await store.load()
+    const next = upsertCredential(entries, {
+      host,
+      username: '',
+      secret: poll.token,
+      method: 'token',
+      updatedAt: Date.now(),
+    })
+    await store.save(next)
+    const done: CredentialOAuthPollResult = { status: 'done', credentials: sortCredentials(next).map(credentialView) }
+    return { status: 200, body: done }
   } catch (error) {
     return storeFailure(error)
   }

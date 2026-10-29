@@ -1343,6 +1343,61 @@
   text-decoration: underline;
 }
 
+/* The token field's trailing 「创建」 button: the input keeps the row's width
+ * and the button hugs its end, mirroring the browser token page it opens. */
+.credSecretRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.credSecretRow .formInput {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The browser sign-in control slot under the password fields. */
+.credOAuth {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* The browser sign-in block: the one-time code the user types into the page
+ * the dialog just opened, plus its waiting state. */
+.credDevice {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.credDeviceRow {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.credDeviceCode {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.credDeviceHint {
+  font-size: 11.5px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.credDeviceWaiting {
+  font-size: 11.5px;
+  color: var(--dsw-alias-label-secondary);
+}
+
 /* The editor's action row: both actions sit on the right, cancel nearest the
  * form, save outermost. Only while the form itself is open. */
 .credFooter {
