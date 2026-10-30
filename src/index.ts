@@ -23,6 +23,7 @@ import {
 import { validateRootDir } from './settings.js'
 import { gitNetworkTool } from './network-tool.js'
 import { gitCredentialsTool } from './tool.js'
+import { createShellBridge } from './shell-bridge.js'
 import { ROUTE_AI_COMMIT_MESSAGE, ROUTE_BRANCH, ROUTE_BRANCH_DELETE, ROUTE_BRANCH_RENAME, ROUTE_CHANGES, ROUTE_COMMIT, ROUTE_COMMIT_FILES, ROUTE_CREDENTIALS, ROUTE_CREDENTIALS_DELETE, ROUTE_CREDENTIALS_OAUTH_POLL, ROUTE_CREDENTIALS_OAUTH_START, ROUTE_CREDENTIALS_SAVE, ROUTE_ENSURE_DIRECTORY, ROUTE_EXISTS, ROUTE_FETCH, ROUTE_GROUP, ROUTE_INSPECT, ROUTE_LOG, ROUTE_PUSH, ROUTE_PURGE, ROUTE_REMOTE, ROUTE_REMOTES, ROUTE_REMOVE, ROUTE_STAGE, ROUTE_STATUS, ROUTE_SWITCH, ROUTE_TAG, ROUTE_TAG_PUSH, ROUTE_UPDATE, ROUTE_WORKTREE, ROUTE_WORKTREES_ALL } from './wire.js'
 
 export const name = 'dsh-git-branch'
@@ -208,6 +209,15 @@ export function apply(ctx: Context, config: Config = {}): void {
 
   const currentConfig = (): Config => (ctx.fiber?.config as Config | undefined) ?? config
 
+  // Host half of the shell credential bridge: derive the environment that
+  // lets a plain `git push` in a spawned shell authenticate with the panel's
+  // stored token instead of the machine helper's account. It also clears the
+  // machine helper chain, so a host without a stored token fails fast rather
+  // than opening a credential dialog no agent shell can answer. Applied at
+  // activate and re-derived after every credential save / delete / sign-in.
+  const shellBridge = createShellBridge({ home: () => homedir(), envHome: () => process.env.DSH_HOME })
+  void shellBridge.apply()
+
   const deps = (): RouteDeps => ({
     exec: childProcessExec,
     sectionRootDir: () => readVolatile(currentConfig().rootDir),
@@ -217,6 +227,7 @@ export function apply(ctx: Context, config: Config = {}): void {
     sectionCnAccelerateUrl: () => readVolatile(currentConfig().cnAccelerateUrl),
     home: () => homedir(),
     envHome: () => process.env.DSH_HOME,
+    refreshShellBridge: () => shellBridge.apply(),
   })
 
   // In dsh 0.1.7+, the settings service projects volatile Config fields into forms.
@@ -236,12 +247,13 @@ export function apply(ctx: Context, config: Config = {}): void {
       () => tools.register(gitCredentialsTool({ home: () => homedir(), envHome: () => process.env.DSH_HOME })),
       'git-worktree: git_credentials tool',
     )
-    // The panel routes are the only other place that injects the stored
-    // credentials; a model running `git push` through the shell would go out
-    // as the machine's helper account instead. This tool runs one network
-    // subcommand with the same `-c http.<url>.extraHeader` prefix, so the
-    // session can authenticate as the configured account without the secret
-    // ever entering the conversation.
+    // The panel routes inject the stored credentials into the requests the
+    // browser half makes; a shell command is served by the environment bridge
+    // (see `shell-bridge.ts`) instead. This tool is the deterministic path for
+    // a session: it runs one network subcommand with the `-c
+    // http.<url>.extraHeader` prefix, so the command authenticates as the
+    // configured account and the secret never enters the conversation — even
+    // when the bridge is missing (an older host, a shell outside the plugin).
     toolsCtx.effect(
       () => tools.register(gitNetworkTool({ home: () => homedir(), envHome: () => process.env.DSH_HOME })),
       'git-worktree: git_network tool',

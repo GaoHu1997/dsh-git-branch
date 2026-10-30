@@ -54,6 +54,9 @@ export interface RouteDeps {
   /** Global per-host credential store. Absent = the fs-backed store at the
    * resolved dsh home; tests substitute an in-memory one. */
   credentialsStore?: CredentialStore
+  /** Re-derive the shell credential bridge after the store changed (absent =
+   * a host that does not provide the bridge; tests omit it). */
+  refreshShellBridge?: () => Promise<void>
 }
 
 /** Real fs-backed one-level directory listing (names only). Plain FILES are
@@ -124,6 +127,22 @@ async function authArgsFor(deps: RouteDeps): Promise<readonly string[]> {
     return authConfigArgs(await credentialStore(deps).load())
   } catch {
     return []
+  }
+}
+
+/**
+ * Re-derive the shell credential bridge after a credential changed, so a
+ * message sent in the same session can `git push` with the token the user just
+ * saved. A bridge failure must never fail the save itself: the store write has
+ * already landed, and the worst case is a stale environment until the next
+ * save (an added host is not reachable, a deleted one may still be).
+ */
+async function refreshBridge(deps: RouteDeps): Promise<void> {
+  if (deps.refreshShellBridge === undefined) return
+  try {
+    await deps.refreshShellBridge()
+  } catch {
+    // Deliberately swallowed; see the contract above.
   }
 }
 
@@ -1334,6 +1353,7 @@ export async function handleCredentialsSave(deps: RouteDeps, body: unknown): Pro
       updatedAt: Date.now(),
     })
     await store.save(next)
+    await refreshBridge(deps)
     const result: CredentialsResult = { credentials: sortCredentials(next).map(credentialView) }
     return { status: 200, body: result }
   } catch (error) {
@@ -1358,6 +1378,7 @@ export async function handleCredentialsDelete(deps: RouteDeps, body: unknown): P
     const next = removeCredential(entries, host)
     if (next.length === entries.length) return fail(400, `no credential is stored for "${host}"`)
     await store.save(next)
+    await refreshBridge(deps)
     const result: CredentialsResult = { credentials: sortCredentials(next).map(credentialView) }
     return { status: 200, body: result }
   } catch (error) {
@@ -1456,6 +1477,7 @@ export async function handleCredentialsOAuthPoll(deps: RouteDeps, body: unknown)
       updatedAt: Date.now(),
     })
     await store.save(next)
+    await refreshBridge(deps)
     const done: CredentialOAuthPollResult = { status: 'done', credentials: sortCredentials(next).map(credentialView) }
     return { status: 200, body: done }
   } catch (error) {

@@ -297,6 +297,19 @@ describe('handleCredentialsOAuthPoll', () => {
     expect(outcome).toEqual({ status: 200, body: { status: 'slow_down' } })
   })
 
+  it('re-derives the shell bridge once the token is stored', async () => {
+    const { fetchImpl } = jsonFetch(APPROVED)
+    const mem = memStore()
+    let refreshes = 0
+    await handleCredentialsOAuthPoll(
+      deps({ fetchImpl, credentialsStore: mem.store, refreshShellBridge: async () => { refreshes += 1 } }),
+      { host: 'github.com', deviceCode: 'd' },
+    )
+    // Signing in is a credential write like any other: the shells this host
+    // spawns must see the new token without waiting for a restart.
+    expect(refreshes).toBe(1)
+  })
+
   it('stores an approved token and answers the masked list', async () => {
     const { fetchImpl } = jsonFetch(APPROVED)
     const mem = memStore()

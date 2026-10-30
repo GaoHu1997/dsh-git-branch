@@ -1,14 +1,14 @@
 /**
  * The model-facing `git_network` tool (host half).
  *
- * The credentials panel stores one token per remote host, but the panel's own
- * fetch / pull / push routes are the only places that inject it (`-c
- * http.<url>.extraHeader=…`). A model running `git push` through the shell
- * therefore authenticates as whatever the machine's credential helper holds —
- * often a different account, which is exactly the complaint this tool closes:
- * it runs ONE git network command with the same `authConfigArgs` the routes
- * use, so the session pushes as the account the user configured, and the
- * secret never enters the conversation.
+ * The credentials panel stores one token per remote host and makes it work on
+ * two channels: the panel's own fetch / pull / push routes (`-c
+ * http.<url>.extraHeader=…`, see `authConfigArgs`) and the environment bridge
+ * the host installs for the shells it spawns (`shell-bridge.ts`). This tool is
+ * the third, explicit one: it runs ONE git network command with the same
+ * `authConfigArgs` the routes use, so a session reliably pushes as the account
+ * the user configured and the secret never enters the conversation — including
+ * on a host that predates the bridge.
  *
  * It is deliberately narrower than a shell wrapper: a fixed subcommand
  * allow-list (fetch / pull / push / ls-remote), no force/delete refspecs, no
@@ -236,8 +236,12 @@ export function gitNetworkTool(deps: GitNetworkToolDeps): GitNetworkTool {
     name: GIT_NETWORK_TOOL_NAME,
     description: 'Run ONE git network command (fetch, pull, push or ls-remote) inside a repository with the '
       + 'plugin\'s stored Git credentials injected, so the command authenticates as the account configured in the '
-      + 'Git credential panel instead of whatever the machine\'s git credential helper happens to hold. Use it when '
-      + 'you must push/fetch/pull yourself; a plain shell `git push` does NOT see these credentials. Pass the git '
+      + 'Git credential panel instead of whatever the machine\'s git credential helper happens to hold. Prefer it for '
+      + 'every push/fetch/pull: the credential is injected explicitly and redacted from the output, while a plain '
+      + 'shell `git push` only reaches these credentials through the environment bridge the plugin host installs '
+      + 'for the shells it spawns. That bridge is absent in an older host or in a terminal started outside it; there '
+      + 'git clears the machine helper chain too, so an unconfigured host fails fast with a "terminal prompts '
+      + 'disabled" error instead of opening a credential dialog nobody can answer. Pass the git '
       + 'arguments subcommand-first, for example ["push"], ["fetch", "--all", "--prune"] or '
       + '["push", "origin", "main"]. Force/delete refspecs, --force/--delete/--mirror/--prune and '
       + '--upload-pack/--receive-pack style options are rejected by design. The secret itself never appears in the '

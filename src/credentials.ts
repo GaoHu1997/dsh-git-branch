@@ -7,9 +7,13 @@
  * and the store is read/written by the host alone.
  *
  * Authentication rides `git -c http.https://<host>/.extraHeader=…` on the
- * panel's own network commands: the user's global git config and credential
- * helpers are left untouched. Only `https://` remotes receive the header;
- * ssh and plain-http remotes are never sent a secret.
+ * panel's own network commands and on the `git_network` tool: the user's git
+ * configuration FILES are never written. Plain `git` commands in a spawned
+ * shell are covered separately by the environment bridge in `shell-bridge.ts`,
+ * which installs this store's per-host tokens as URL-scoped credential helpers
+ * through `GIT_CONFIG_*` (process environment only, never a config file).
+ * Only `https://` remotes receive the header; ssh and plain-http remotes are
+ * never sent a secret.
  */
 
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'

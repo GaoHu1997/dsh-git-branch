@@ -58,6 +58,15 @@ function depsWith(exec: Exec, store?: CredentialStore): RouteDeps {
   }
 }
 
+/** depsWith plus a bridge refresh spy the credential routes must call. */
+function bridgedDeps(
+  exec: Exec,
+  store: CredentialStore,
+  refresh: () => Promise<void>,
+): RouteDeps {
+  return { ...depsWith(exec, store), refreshShellBridge: refresh }
+}
+
 /** An in-memory credential store the routes can read and write. */
 function memoryStore(entries: readonly GitCredential[] = []): CredentialStore {
   let state = [...entries]
@@ -205,6 +214,35 @@ describe('credential routes', () => {
     const removed = await handleCredentialsDelete(depsWith(repoExec({}), store), { host: 'github.com' })
     expect(removed).toMatchObject({ status: 200, body: { credentials: [] } })
     expect(await store.load()).toEqual([])
+  })
+
+  it('re-derives the shell bridge after a save and after a delete', async () => {
+    const store = memoryStore()
+    let refreshes = 0
+    const deps = bridgedDeps(repoExec({}), store, async () => { refreshes += 1 })
+    await handleCredentialsSave(deps, { host: 'github.com', username: 'octo', method: 'token', secret: 'ghp_x' })
+    expect(refreshes).toBe(1)
+    await handleCredentialsDelete(deps, { host: 'github.com' })
+    expect(refreshes).toBe(2)
+  })
+
+  it('keeps the saved credential when the bridge refresh fails', async () => {
+    const store = memoryStore()
+    const deps = bridgedDeps(repoExec({}), store, async () => { throw new Error('bridge exploded') })
+    const saved = await handleCredentialsSave(deps, { host: 'github.com', username: 'octo', method: 'token', secret: 'ghp_x' })
+    // The store write is the user's intent; a broken environment refresh must
+    // not turn a successful save into an error dialog.
+    expect(saved.status).toBe(200)
+    expect(await store.load()).toMatchObject([{ host: 'github.com', secret: 'ghp_x' }])
+  })
+
+  it('does not refresh the bridge for a rejected request', async () => {
+    const store = memoryStore()
+    let refreshes = 0
+    const deps = bridgedDeps(repoExec({}), store, async () => { refreshes += 1 })
+    expect((await handleCredentialsSave(deps, { host: 'github.com', username: 'u', method: 'token' })).status).toBe(400)
+    expect((await handleCredentialsDelete(deps, { host: 'gitlab.com' })).status).toBe(400)
+    expect(refreshes).toBe(0)
   })
 })
 
