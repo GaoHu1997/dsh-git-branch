@@ -100,6 +100,10 @@ export const ROUTE_CREDENTIALS_OAUTH_START = `${ROUTE_PREFIX}/credentials-oauth-
  * stores the token and answers the fresh masked list once the user approves. */
 export const ROUTE_CREDENTIALS_OAUTH_POLL = `${ROUTE_PREFIX}/credentials-oauth-poll`
 
+/** POST ROUTE_PREFIX/credentials-import — copy the credentials the machine's
+ * own helpers already answer for into the managed store (decision 0038). */
+export const ROUTE_CREDENTIALS_IMPORT = `${ROUTE_PREFIX}/credentials-import`
+
 /** POST ROUTE_PREFIX/remotes — the repository's configured remotes. */
 export const ROUTE_REMOTES = `${ROUTE_PREFIX}/remotes`
 
@@ -723,6 +727,36 @@ export interface CredentialDeleteBody {
 
 /** POST credentials-delete response body: the updated masked list. */
 export type CredentialDeleteResult = CredentialsResult
+
+/** POST credentials-import request body — absent hosts means "whatever the
+ * machine's gitconfig points git at". */
+export interface CredentialImportBody {
+  /** Explicit hosts to probe; omitted, the gitconfig's URL-scoped hosts are
+   * the candidates. */
+  hosts?: string[]
+}
+
+/** One host the import copied into the store (secret never included). */
+export interface CredentialImportEntry {
+  host: string
+  /** `oauth2` for a token credential, the helper's user name otherwise. */
+  username: string
+  method: CredentialMethod
+}
+
+/** One host whose machine helper had nothing to give; the store is untouched. */
+export interface CredentialImportFailure {
+  host: string
+  error: string
+}
+
+/** POST credentials-import response body: the fresh masked list plus what the
+ * import did per host. */
+export interface CredentialImportResult extends CredentialsResult {
+  imported: CredentialImportEntry[]
+  skipped: string[]
+  failed: CredentialImportFailure[]
+}
 
 /** POST credentials-oauth-start request body. */
 export interface CredentialOAuthStartBody {

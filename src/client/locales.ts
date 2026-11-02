@@ -241,6 +241,10 @@ export type GitWorktreeKey =
   | 'cred.methodPassword'
   | 'cred.getToken'
   | 'cred.add'
+  | 'cred.import'
+  | 'cred.importing'
+  | 'cred.importDone'
+  | 'cred.importNone'
   | 'cred.edit'
   | 'cred.save'
   | 'cred.saving'
@@ -512,7 +516,7 @@ export const en: Record<GitWorktreeKey, string> = {
   'accel.mirrorDownHint': 'If the mirror is down, disable acceleration or change the URL',
   'panel.credentials': 'Credentials',
   'cred.title': 'Git credentials',
-  'cred.hint': 'Global, one entry per host: a token saved for github.com serves every repository. Stored only on this machine in git-credentials.json.',
+  'cred.hint': 'One entry per host, shared by all repos. Stored in ~/.git-credentials, so plain git uses it too.',
   'cred.empty': 'No credentials saved yet',
   'cred.hostLabel': 'Host',
   'cred.hostPlaceholder': 'github.com',
@@ -527,6 +531,10 @@ export const en: Record<GitWorktreeKey, string> = {
   'cred.methodPassword': 'Password',
   'cred.getToken': 'Get a token',
   'cred.add': 'Add credential',
+  'cred.import': 'Import from this machine',
+  'cred.importing': 'Importing…',
+  'cred.importDone': 'Imported {count} host(s) — skipped {skipped}, failed {failed}',
+  'cred.importNone': 'Nothing new to import from this machine',
   'cred.edit': 'Edit',
   'cred.save': 'Save',
   'cred.saving': 'Saving…',
@@ -799,7 +807,7 @@ export const zh: Record<GitWorktreeKey, string> = {
   'accel.mirrorDownHint': '若加速地址不可用，可停用国内加速或更换地址',
   'panel.credentials': '密钥配置',
   'cred.title': 'Git 密钥配置',
-  'cred.hint': '全局生效：同一域名只需配置一次，该域名的所有仓库共用。密钥只保存在本机 git-credentials.json 中。',
+  'cred.hint': '按域名保存，所有仓库共用；密钥写入本机 ~/.git-credentials，命令行 git 同样生效。',
   'cred.empty': '还没有配置任何密钥',
   'cred.hostLabel': '域名',
   'cred.hostPlaceholder': 'github.com',
@@ -814,6 +822,10 @@ export const zh: Record<GitWorktreeKey, string> = {
   'cred.methodPassword': '密码',
   'cred.getToken': '获取令牌',
   'cred.add': '新增密钥',
+  'cred.import': '从本机导入',
+  'cred.importing': '导入中…',
+  'cred.importDone': '已导入 {count} 个域名（跳过 {skipped}，失败 {failed}）',
+  'cred.importNone': '本机没有新的凭据可导入',
   'cred.edit': '编辑',
   'cred.save': '保存',
   'cred.saving': '保存中…',

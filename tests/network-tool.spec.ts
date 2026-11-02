@@ -14,15 +14,15 @@ const GITHUB: GitCredential = { host: 'github.com', username: 'octo', secret: 'g
 const GITEE: GitCredential = { host: 'gitee.com', username: '', secret: 'gitee_tok', method: 'token', updatedAt: 0 }
 const GITHUB_BASIC = Buffer.from('octo:ghp_secret', 'utf8').toString('base64')
 
-function memoryStore(entries: readonly GitCredential[], path = '/home/u/.dsh/git-credentials.json'): CredentialStore {
+function memoryStore(entries: readonly GitCredential[], path = '/home/u/.git-credentials'): CredentialStore {
   return { path, load: async () => [...entries], save: async () => undefined }
 }
 
 function brokenStore(): CredentialStore {
   return {
-    path: '/home/u/.dsh/git-credentials.json',
+    path: '/home/u/.git-credentials',
     load: async () => {
-      throw new CredentialStoreError('/home/u/.dsh/git-credentials.json', 'is not valid JSON')
+      throw new CredentialStoreError('/home/u/.git-credentials', 'is not valid JSON')
     },
     save: async () => undefined,
   }
@@ -105,22 +105,17 @@ describe('gitNetworkTool', () => {
   it('is named for the model and declares its parameter contract', () => {
     const { tool } = toolWith(memoryStore([]))
     expect(tool.name).toBe(GIT_NETWORK_TOOL_NAME)
-    expect(tool.description).toContain('stored Git credentials')
+    expect(tool.description).toContain('credentials managed for the remote host')
     expect(tool.parameters).toMatchObject({ type: 'object', required: ['repoPath', 'args'] })
     const required = (tool.output.schema as { required: string[] }).required
     expect(required).toEqual(expect.arrayContaining(['exitCode', 'authenticatedHosts']))
   })
 
-  it('prepends one -c extraHeader per stored host and runs in repoPath', async () => {
+  it('runs the request verbatim — the credentials come from ~/.git-credentials', async () => {
     const { tool, calls } = toolWith(memoryStore([GITEE, GITHUB]), { stdout: 'ok\n' })
     const value = await tool.execute({ repoPath: '/repo', args: ['push', 'origin', 'main'] })
-    const giteeBasic = Buffer.from('oauth2:gitee_tok', 'utf8').toString('base64')
     expect(calls[0]?.file).toBe('git')
-    expect(calls[0]?.args).toEqual([
-      '-c', `http.https://gitee.com/.extraHeader=AUTHORIZATION: basic ${giteeBasic}`,
-      '-c', `http.https://github.com/.extraHeader=AUTHORIZATION: basic ${GITHUB_BASIC}`,
-      'push', 'origin', 'main',
-    ])
+    expect(calls[0]?.args).toEqual(['push', 'origin', 'main'])
     expect(calls[0]?.cwd).toBe('/repo')
     expect(calls[0]?.timeoutMs).toBe(120_000)
     expect(value).toMatchObject({

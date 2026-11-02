@@ -37,7 +37,7 @@
 - [0018 — Git 管理面板加「国内加速」按钮（加速前缀 URL 重写）](0018-cn-accelerate-mirror-prefix.md)
 - [0019 — 提交历史图、筛选与右键操作（含行间连线几何修复）](0019-git-history-graph-panel.md)
 - [0020 — 提交历史右键「推送标签」动作](0020-push-tag-action.md)
-- [0021 — 全局按域名的 Git 密钥配置](0021-global-git-credentials.md)
+- [0021 — 全局按域名的 Git 密钥配置](0021-global-git-credentials.md)（存储位置与注入方式已被 0037 取代）
 - [0022 — 面板内管理远程地址（含多个远程）](0022-remote-address-management.md)
 - [0023 — 令牌免用户名与 AI 可读的密钥工具](0023-token-without-username-and-credentials-tool.md)
 - [0024 — 凭据表单的 IDEA 式浏览器授权与令牌创建入口](0024-credentials-browser-sign-in.md)
@@ -50,6 +50,8 @@
 - [0031 — git_network 测试用绝对路径改为平台无关](0031-cross-platform-network-tool-test.md)
 - [0032 — shell 里的 `git push` 也用插件密钥（环境变量桥）](0032-shell-git-credential-bridge.md)（`GIT_CONFIG_KEY/VALUE_*` 注入通道已被 0034 取代）
 - [0033 — 发布 v1.0.10 补丁版本](0033-release-v1.0.10.md)
-- [0034 — shell 凭据桥改用 GIT_CONFIG_GLOBAL 会话配置，凭据入口收敛为服务](0034-shell-gitconfig-channel-and-credential-service.md)
+- [0034 — shell 凭据桥改用 GIT_CONFIG_GLOBAL 会话配置，凭据入口收敛为服务](0034-shell-gitconfig-channel-and-credential-service.md)（环境注入通道已被 0037 取代）
 - [0035 — 发布 v1.1.0 次版本](0035-release-v1.1.0.md)
 - [0036 — shell 凭据桥启动时清掉 0032 遗留的 `GIT_CONFIG_COUNT` 环境通道](0036-shell-bridge-drops-legacy-config-env.md)
+- [0037 — 凭据直接管理本机 ~/.git-credentials，经 ~/.gitconfig 的 URL 作用域 include 生效](0037-local-git-credentials-backend.md)（取代 0021 的存储位置与 0034 的环境注入通道）
+- [0038 — 从本机凭据导入并在启动时默认接管](0038-import-machine-credentials.md)

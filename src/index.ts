@@ -17,14 +17,14 @@ import type {} from '@deepseek-ai/dsh-settings'
 import { childProcessExec } from './git.js'
 import { ACCEL_DEFAULT_URL, accelerateUrlError } from './normalize.js'
 import {
-  handleCredentials, handleCredentialsDelete, handleCredentialsOAuthPoll, handleCredentialsOAuthStart, handleCredentialsSave, handleRemote, handleRemotes, handleAiCommitMessage, handleChanges, handleCommit, handleCommitFiles, handleCreateBranch, handleCreateTag, handleCreateWorktree, handleDeleteBranch, handleEnsureDirectory, handleFetch, handleGroupWorktrees, handleInspectWorktree, handleLog, handlePathExists, handlePurgeDirectory, handlePushTag, handleRemoveWorktree, handleRenameBranch, handleStage, handleStatus, handleSwitch, handleUpdate, handlePush, handleWorktreesAll,
+  handleCredentials, handleCredentialsDelete, handleCredentialsImport, handleCredentialsOAuthPoll, handleCredentialsOAuthStart, handleCredentialsSave, handleRemote, handleRemotes, handleAiCommitMessage, handleChanges, handleCommit, handleCommitFiles, handleCreateBranch, handleCreateTag, handleCreateWorktree, handleDeleteBranch, handleEnsureDirectory, handleFetch, handleGroupWorktrees, handleInspectWorktree, handleLog, handlePathExists, handlePurgeDirectory, handlePushTag, handleRemoveWorktree, handleRenameBranch, handleStage, handleStatus, handleSwitch, handleUpdate, handlePush, handleWorktreesAll,
   type LlmStreamRuntime, type RouteDeps, type RouteOutcome,
 } from './routes.js'
 import { validateRootDir } from './settings.js'
 import { gitNetworkTool } from './network-tool.js'
 import { gitCredentialsTool } from './tool.js'
 import { createCredentialService } from './credential-service.js'
-import { ROUTE_AI_COMMIT_MESSAGE, ROUTE_BRANCH, ROUTE_BRANCH_DELETE, ROUTE_BRANCH_RENAME, ROUTE_CHANGES, ROUTE_COMMIT, ROUTE_COMMIT_FILES, ROUTE_CREDENTIALS, ROUTE_CREDENTIALS_DELETE, ROUTE_CREDENTIALS_OAUTH_POLL, ROUTE_CREDENTIALS_OAUTH_START, ROUTE_CREDENTIALS_SAVE, ROUTE_ENSURE_DIRECTORY, ROUTE_EXISTS, ROUTE_FETCH, ROUTE_GROUP, ROUTE_INSPECT, ROUTE_LOG, ROUTE_PUSH, ROUTE_PURGE, ROUTE_REMOTE, ROUTE_REMOTES, ROUTE_REMOVE, ROUTE_STAGE, ROUTE_STATUS, ROUTE_SWITCH, ROUTE_TAG, ROUTE_TAG_PUSH, ROUTE_UPDATE, ROUTE_WORKTREE, ROUTE_WORKTREES_ALL } from './wire.js'
+import { ROUTE_AI_COMMIT_MESSAGE, ROUTE_BRANCH, ROUTE_BRANCH_DELETE, ROUTE_BRANCH_RENAME, ROUTE_CHANGES, ROUTE_COMMIT, ROUTE_COMMIT_FILES, ROUTE_CREDENTIALS, ROUTE_CREDENTIALS_DELETE, ROUTE_CREDENTIALS_IMPORT, ROUTE_CREDENTIALS_OAUTH_POLL, ROUTE_CREDENTIALS_OAUTH_START, ROUTE_CREDENTIALS_SAVE, ROUTE_ENSURE_DIRECTORY, ROUTE_EXISTS, ROUTE_FETCH, ROUTE_GROUP, ROUTE_INSPECT, ROUTE_LOG, ROUTE_PUSH, ROUTE_PURGE, ROUTE_REMOTE, ROUTE_REMOTES, ROUTE_REMOVE, ROUTE_STAGE, ROUTE_STATUS, ROUTE_SWITCH, ROUTE_TAG, ROUTE_TAG_PUSH, ROUTE_UPDATE, ROUTE_WORKTREE, ROUTE_WORKTREES_ALL } from './wire.js'
 
 export const name = 'dsh-git-branch'
 
@@ -209,16 +209,22 @@ export function apply(ctx: Context, config: Config = {}): void {
 
   const currentConfig = (): Config => (ctx.fiber?.config as Config | undefined) ?? config
 
-  // Host half of the credential channels: one service owns the store, the
-  // `-c extraHeader` injection for plugin-run commands and the shell bridge
-  // (decision 0034). The bridge lets a plain `git push` in a spawned shell
-  // authenticate with the panel's stored token instead of the machine helper's
-  // account. It also clears the machine helper chain, so a host without a
-  // stored token fails fast rather than opening a credential dialog no agent
-  // shell can answer. Applied at activate and re-derived after every
-  // credential save / delete / sign-in.
+  // Host half of the credential channel (decision 0037): one service owns the
+  // store — the machine's own `~/.git-credentials`, i.e. git's
+  // `credential-store` file — and installs a URL-scoped `helper = store`
+  // include into `~/.gitconfig`. Because that is git's standard channel, a
+  // plain `git push` in a spawned shell authenticates with the panel's token,
+  // and a host without a stored token fails fast (`GIT_TERMINAL_PROMPT=0`)
+  // rather than opening a credential dialog no agent shell can answer.
+  // Applied at activate and re-derived after every credential save / delete /
+  // sign-in.
   const credentials = createCredentialService({ home: () => homedir(), envHome: () => process.env.DSH_HOME })
+  // Import first, then derive the include: a machine already signed in through
+  // gh / GCM / Keychain keeps working without the user re-entering a token
+  // (decision 0038). Both steps are opportunistic and never throw.
   void credentials.refreshShellEnv()
+    .then(() => credentials.autoImport())
+    .catch(() => { /* the panel still works; the next save retries the include */ })
   ctx.effect(() => () => {
     void credentials.dispose()
   }, 'git-worktree: credential service dispose')
@@ -253,13 +259,10 @@ export function apply(ctx: Context, config: Config = {}): void {
       () => tools.register(gitCredentialsTool({ home: () => homedir(), envHome: () => process.env.DSH_HOME, credentialsService: credentials })),
       'git-worktree: git_credentials tool',
     )
-    // The panel routes inject the stored credentials into the requests the
-    // browser half makes; a shell command is served by the environment bridge
-    // (see `shell-bridge.ts`) instead. This tool is the deterministic path for
-    // a session: it runs one network subcommand with the `-c
-    // http.<url>.extraHeader` prefix, so the command authenticates as the
-    // configured account and the secret never enters the conversation — even
-    // when the bridge is missing (an older host, a shell outside the plugin).
+    // The panel routes authenticate through the same local git credential
+    // store (0037). This tool is the deterministic path for a session: it
+    // runs one network subcommand, git resolves the host through the include
+    // the service installs, and the secret never enters the conversation.
     toolsCtx.effect(
       () => tools.register(gitNetworkTool({ home: () => homedir(), envHome: () => process.env.DSH_HOME, credentialsService: credentials })),
       'git-worktree: git_network tool',
@@ -351,6 +354,9 @@ export function apply(ctx: Context, config: Config = {}): void {
     // poll stores the token and answers the fresh masked list.
     postRoute(ROUTE_CREDENTIALS_OAUTH_START, 'credentials-oauth-start', handleCredentialsOAuthStart)
     postRoute(ROUTE_CREDENTIALS_OAUTH_POLL, 'credentials-oauth-poll', handleCredentialsOAuthPoll)
+    // One-click adoption of what the machine's own helpers already know:
+    // the modal calls it, startup calls it once automatically.
+    postRoute(ROUTE_CREDENTIALS_IMPORT, 'credentials-import', handleCredentialsImport)
     postRoute(ROUTE_REMOTES, 'remotes', handleRemotes)
     postRoute(ROUTE_REMOTE, 'remote', handleRemote)
 

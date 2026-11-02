@@ -225,7 +225,7 @@ function memStore(initial: GitCredential[] = []): { store: CredentialStore; entr
   let entries = [...initial]
   return {
     store: {
-      path: '/home/u/.dsh/git-credentials.json',
+      path: '/home/u/.git-credentials',
       load: async () => [...entries],
       save: async next => {
         entries = [...next]
@@ -359,7 +359,7 @@ describe('handleCredentialsOAuthPoll', () => {
   it('surfaces a corrupt store as 500', async () => {
     const { fetchImpl } = jsonFetch(APPROVED)
     const store: CredentialStore = {
-      path: '/home/u/.dsh/git-credentials.json',
+      path: '/home/u/.git-credentials',
       load: async () => {
         throw new Error('git-credentials.json is not valid JSON')
       },

@@ -6,15 +6,16 @@
 import { basename, dirname, join, resolve } from 'node:path'
 import { mkdir, readdir, rm, stat } from 'node:fs/promises'
 import { runPostCreateCopy, type CopyFilesSeams } from './copy-files.js'
-import { authConfigArgs, credentialFilePath, createCredentialStore, credentialHostIssue, credentialSecretIssue, credentialUsernameIssue, maskSecret, normalizeCredentialHost, removeCredential, sortCredentials, upsertCredential, type CredentialStore, type GitCredential } from './credentials.js'
+import { credentialHostIssue, credentialSecretIssue, credentialUsernameIssue, createLocalCredentialStore, maskSecret, normalizeCredentialHost, removeCredential, sortCredentials, upsertCredential, type CredentialStore, type GitCredential } from './credentials.js'
 import type { CredentialService } from './credential-service.js'
+import { importLocalCredentials as runLocalImport, type LocalImportReport } from './local-import.js'
 import { appendWorktreeExclude, fsExcludeSeams, GitError, addRemote, addWorktree, addWorktreeCutout, collectAiDiff, commitFiles, commitIndex, createBranch, createTag, cutoutBranchName, deleteBranch, fetchAll, fsDirExists, inspectWorktree, isAbsoluteDir, isStageablePath, listRemotes, listTagNames, logHistory, probeRepo, probeWorkspaceGit, pushTag, removeRemote, removeWorktree, renameBranch, resolveBranch, resolvePushRemote, pushBranch, setRemoteUrl, stagePaths, switchBranch, updateBranch, workingChanges, type DirExists, type ExcludeSeams, type Exec } from './git.js'
 import { ACCEL_DEFAULT_URL, accelerateUrlError, isAbsoluteConfigPath, normalizeAccelerateUrl, remoteNameIssue, remoteUrlIssue, sanitizeBranchDir, type RemoteNameIssue, type RemoteUrlIssue } from './normalize.js'
 import { deviceFlowClientId, isDeviceFlowHost, pollDeviceFlow, startDeviceFlow, type DeviceFlowPoll } from './oauth.js'
 import { resolveRootDir } from './settings.js'
 import { COMMIT_MESSAGE_LIMIT } from './wire.js'
 import type {
-  AiCommitMessageBody, AiCommitMessageResult, ChangesBody, ChangesResult, CommitBody, CommitFilesBody, CommitFilesResult, CommitResult, CreateBranchBody, CreateBranchResult, CreateTagBody, CreateTagResult, CreateWorktreeBody, CreateWorktreeResult, CredentialDeleteBody, CredentialEntryView, CredentialOAuthPollBody, CredentialOAuthPollResult, CredentialOAuthStartBody, CredentialOAuthStartResult, CredentialSaveBody, CredentialsResult, DeleteBranchBody, DeleteBranchResult, EnsureDirectoryBody, EnsureDirectoryResult, FetchBody, FetchResult, GroupWorkspacesResult, InspectWorktreeBody, InspectWorktreeResult, LogBody, LogResult, PathExistsResult, PurgeDirectoryBody, PurgeDirectoryResult, PushTagBody, PushTagResult, RemoteAction, RemoveWorktreeBody, RemoveWorktreeResult, RemotesBody, RemotesResult, RemoteMutationBody, RenameBranchBody, RenameBranchResult, RepoStatus, RouteError, StageBody, StageResult, SwitchBody, SwitchResult, UpdateBody, UpdateResult, PushBody, PushResult, WorktreesAllResult,
+  AiCommitMessageBody, AiCommitMessageResult, ChangesBody, ChangesResult, CommitBody, CommitFilesBody, CommitFilesResult, CommitResult, CreateBranchBody, CreateBranchResult, CreateTagBody, CreateTagResult, CreateWorktreeBody, CreateWorktreeResult, CredentialDeleteBody, CredentialEntryView, CredentialOAuthPollBody, CredentialOAuthPollResult, CredentialOAuthStartBody, CredentialOAuthStartResult, CredentialImportResult, CredentialSaveBody, CredentialsResult, DeleteBranchBody, DeleteBranchResult, EnsureDirectoryBody, EnsureDirectoryResult, FetchBody, FetchResult, GroupWorkspacesResult, InspectWorktreeBody, InspectWorktreeResult, LogBody, LogResult, PathExistsResult, PurgeDirectoryBody, PurgeDirectoryResult, PushTagBody, PushTagResult, RemoteAction, RemoveWorktreeBody, RemoveWorktreeResult, RemotesBody, RemotesResult, RemoteMutationBody, RenameBranchBody, RenameBranchResult, RepoStatus, RouteError, StageBody, StageResult, SwitchBody, SwitchResult, UpdateBody, UpdateResult, PushBody, PushResult, WorktreesAllResult,
 } from './wire.js'
 
 /** Everything the handlers need from the host half. */
@@ -61,6 +62,10 @@ export interface RouteDeps {
   /** Re-derive the shell credential bridge after the store changed (absent =
    * a host that does not provide the bridge; tests omit it). */
   refreshShellBridge?: () => Promise<void>
+  /** Machine-credential import seam (decision 0038): probes the helpers the
+   * user's own gitconfig points git at, for the hosts it names. Tests
+   * substitute; absent = the real `git credential fill` probe. */
+  importLocalCredentials?: (store: CredentialStore, hosts?: readonly string[]) => Promise<LocalImportReport>
 }
 
 /** Real fs-backed one-level directory listing (names only). Plain FILES are
@@ -93,7 +98,7 @@ export async function fsMkdirRecursive(path: string): Promise<void> {
 /** One route outcome: HTTP status plus the JSON body. */
 export interface RouteOutcome {
   status: number
-  body: RepoStatus | CreateWorktreeResult | SwitchResult | CreateBranchResult | FetchResult | UpdateResult | GroupWorkspacesResult | InspectWorktreeResult | RemoveWorktreeResult | PathExistsResult | EnsureDirectoryResult | WorktreesAllResult | PurgeDirectoryResult | ChangesResult | StageResult | CommitResult | LogResult | CommitFilesResult | CreateTagResult | PushTagResult | AiCommitMessageResult | CredentialsResult | CredentialOAuthStartResult | CredentialOAuthPollResult | RemotesResult | RouteError
+  body: RepoStatus | CreateWorktreeResult | SwitchResult | CreateBranchResult | FetchResult | UpdateResult | GroupWorkspacesResult | InspectWorktreeResult | RemoveWorktreeResult | PathExistsResult | EnsureDirectoryResult | WorktreesAllResult | PurgeDirectoryResult | ChangesResult | StageResult | CommitResult | LogResult | CommitFilesResult | CreateTagResult | PushTagResult | AiCommitMessageResult | CredentialsResult | CredentialOAuthStartResult | CredentialOAuthPollResult | CredentialImportResult | RemotesResult | RouteError
 }
 
 /** Uniform failure envelope. */
@@ -113,27 +118,21 @@ function accelPrefix(deps: RouteDeps): string | undefined {
   return accelerateUrlError(url) === undefined ? normalizeAccelerateUrl(url) : undefined
 }
 
-/** The global credential store: the service's shared instance (decision 0034),
- * else the wired store, else the fs-backed file at the resolved dsh home
- * (`<dshHome>/git-credentials.json`). */
+/** The global credential store: the service's shared instance (decision 0037),
+ * else the wired store, else the local `~/.git-credentials`-backed store. */
 function credentialStore(deps: RouteDeps): CredentialStore {
-  return deps.credentialsService?.store ?? deps.credentialsStore ?? createCredentialStore(credentialFilePath(deps.home(), deps.envHome()))
+  return deps.credentialsService?.store ?? deps.credentialsStore ?? createLocalCredentialStore(deps.home(), deps.envHome())
 }
 
 /**
- * `-c http.<url>.extraHeader` pairs for every stored credential, ready to
- * prepend to a git network command. A broken credential FILE must never break
- * git itself: an unreadable store degrades to "no credentials" (the network
- * command then runs unauthenticated, as it always did) — the credentials
- * route is where the file problem surfaces.
+ * Credential argv for one network command. Empty by design since 0037: the
+ * token reaches git through the URL-scoped `helper = store` include that
+ * `~/.gitconfig` carries, so there is nothing to inject. The seam stays so
+ * every call site keeps one place to change if a command ever needs an
+ * explicit override again.
  */
-async function authArgsFor(deps: RouteDeps): Promise<readonly string[]> {
-  if (deps.credentialsService !== undefined) return deps.credentialsService.authConfigArgs()
-  try {
-    return authConfigArgs(await credentialStore(deps).load())
-  } catch {
-    return []
-  }
+async function authArgsFor(_deps: RouteDeps): Promise<readonly string[]> {
+  return []
 }
 
 /**
@@ -1387,6 +1386,53 @@ export async function handleCredentialsDelete(deps: RouteDeps, body: unknown): P
     await store.save(next)
     await refreshBridge(deps)
     const result: CredentialsResult = { credentials: sortCredentials(next).map(credentialView) }
+    return { status: 200, body: result }
+  } catch (error) {
+    return storeFailure(error)
+  }
+}
+
+/**
+ * POST /credentials-import — copy what the machine's own credential helpers
+ * already answer for into the managed store, so a machine signed in through
+ * gh/GCM/Keychain stops needing a second sign-in here (decision 0038).
+ *
+ * The candidates are the URL-scoped hosts of the user's gitconfig; a host the
+ * panel already manages is skipped (the panel wins), and a host whose helper
+ * answers nothing is reported per host instead of failing the whole request.
+ * @param deps - host dependencies.
+ * @param body - parsed request body: absent, `{}` or `{ hosts?: string[] }`.
+ */
+export async function handleCredentialsImport(deps: RouteDeps, body: unknown): Promise<RouteOutcome> {
+  const record: unknown = body ?? {}
+  if (typeof record !== 'object' || record === null || Array.isArray(record)) {
+    return fail(400, 'request body must be a JSON object')
+  }
+  const fields = record as Record<string, unknown>
+  for (const key of Object.keys(fields)) {
+    if (key !== 'hosts') return fail(400, `unknown body key "${key}"`)
+  }
+  const rawHosts = fields.hosts
+  let hosts: string[] | undefined
+  if (rawHosts !== undefined) {
+    if (!Array.isArray(rawHosts) || rawHosts.some(value => typeof value !== 'string')) {
+      return fail(400, '"hosts" must be an array of remote hosts')
+    }
+    hosts = (rawHosts as string[]).map(value => value.trim()).filter(value => value !== '')
+    if (hosts.length === 0) return fail(400, '"hosts" must not be empty')
+  }
+  try {
+    const store = credentialStore(deps)
+    const importNow = deps.importLocalCredentials ?? ((target: CredentialStore, wanted?: readonly string[]) => runLocalImport(target, {}, wanted))
+    const report = await importNow(store, hosts)
+    if (report.imported.length > 0) await refreshBridge(deps)
+    const entries = await store.load()
+    const result: CredentialImportResult = {
+      credentials: sortCredentials(entries).map(credentialView),
+      imported: report.imported,
+      skipped: report.skipped,
+      failed: report.failed,
+    }
     return { status: 200, body: result }
   } catch (error) {
     return storeFailure(error)

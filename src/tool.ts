@@ -17,8 +17,7 @@
 
 import {
   basicUsername,
-  createCredentialStore,
-  credentialFilePath,
+  createLocalCredentialStore,
   maskSecret,
   type CredentialStore,
   type GitCredential,
@@ -120,7 +119,7 @@ export function renderGitCredentials(value: GitCredentialsValue): string {
  * @returns a definition ready for `ctx.tools.register`.
  */
 export function gitCredentialsTool(deps: GitCredentialsToolDeps): GitCredentialsTool {
-  const storeOf = (): CredentialStore => deps.credentialsService?.store ?? deps.store ?? createCredentialStore(credentialFilePath(deps.home(), deps.envHome()))
+  const storeOf = (): CredentialStore => deps.credentialsService?.store ?? deps.store ?? createLocalCredentialStore(deps.home(), deps.envHome())
 
   /** Read the store, folding a read failure into the result value. */
   const read = async (args: GitCredentialsArgs): Promise<GitCredentialsValue> => {

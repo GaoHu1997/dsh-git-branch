@@ -5,7 +5,7 @@ import { GIT_CREDENTIALS_TOOL_NAME, gitCredentialsTool, renderGitCredentials } f
 const GITHUB: GitCredential = { host: 'github.com', username: 'octo', secret: 'ghp_secret', method: 'token', updatedAt: 1_700_000_000_000 }
 const GITEE: GitCredential = { host: 'gitee.com', username: '', secret: 'gitee_tok', method: 'token', updatedAt: 0 }
 
-function memoryStore(entries: readonly GitCredential[], path = '/home/u/.dsh/git-credentials.json'): CredentialStore {
+function memoryStore(entries: readonly GitCredential[], path = '/home/u/.git-credentials'): CredentialStore {
   return {
     path,
     load: async () => [...entries],
@@ -15,9 +15,9 @@ function memoryStore(entries: readonly GitCredential[], path = '/home/u/.dsh/git
 
 function brokenStore(): CredentialStore {
   return {
-    path: '/home/u/.dsh/git-credentials.json',
+    path: '/home/u/.git-credentials',
     load: async () => {
-      throw new CredentialStoreError('/home/u/.dsh/git-credentials.json', 'is not valid JSON')
+      throw new CredentialStoreError('/home/u/.git-credentials', 'is not valid JSON')
     },
     save: async () => undefined,
   }
@@ -38,7 +38,7 @@ describe('gitCredentialsTool', () => {
 
   it('lists every host with masked secrets and the placeholder user', async () => {
     const value = await toolWith(memoryStore([GITEE, GITHUB])).execute({})
-    expect(value.path).toBe('/home/u/.dsh/git-credentials.json')
+    expect(value.path).toBe('/home/u/.git-credentials')
     expect(value.total).toBe(2)
     expect(value.credentials).toEqual([
       { host: 'gitee.com', username: 'oauth2', method: 'token', secret: '****_tok', updatedAt: '' },

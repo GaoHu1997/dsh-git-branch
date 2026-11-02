@@ -1,22 +1,31 @@
 /**
- * Global git credential store (host half). Credentials belong to a remote
- * HOST, not to a project: the same `github.com` token serves every repository
- * the panel touches, so the record lives in one file under `$DSH_HOME`
- * (`~/.dsh`) instead of the per-repository settings document. The secret
- * never travels to the browser — the list route answers masked tails only —
- * and the store is read/written by the host alone.
+ * Global git credential store (host half), backed by the machine's own
+ * credential file (decision 0037).
  *
- * Authentication rides `git -c http.https://<host>/.extraHeader=…` on the
- * panel's own network commands and on the `git_network` tool: the user's git
- * configuration FILES are never written. Plain `git` commands in a spawned
- * shell are covered separately by the environment bridge in `shell-bridge.ts`,
- * which installs this store's per-host tokens as URL-scoped credential helpers
- * through `GIT_CONFIG_*` (process environment only, never a config file).
- * Only `https://` remotes receive the header; ssh and plain-http remotes are
- * never sent a secret.
+ * A credential belongs to a remote HOST, not to a project: the same
+ * `github.com` token serves every repository. Up to 1.1.x the plugin kept its
+ * own `~/.dsh/git-credentials.json`, which meant the panel's token was
+ * invisible to a plain `git` run in a shell and the machine's helpers
+ * answered instead (often with a different account). 0037 makes the panel
+ * manage the SAME file git's built-in `credential-store` helper uses —
+ * `~/.git-credentials` — so one save is visible to every git process:
+ *
+ *  - the secret lines are the store format (`https://user:pass@host`),
+ *    percent-encoded exactly as `git credential approve` writes them;
+ *  - method/updatedAt cannot live in that format, so a sibling
+ *    `<dsh-home>/git-credentials.meta.json` keeps the UI-only metadata
+ *    (no secret ever goes in there);
+ *  - a generated `<dsh-home>/git-credentials.include.gitconfig` scopes
+ *    `helper = store` to each managed host, and `~/.gitconfig` gains one
+ *    `[include] path = <that file>` line (idempotent, decision 0037
+ *    overturns 0021's "never write the user's git config" for exactly this
+ *    one scoped include).
+ *
+ * The secret never travels to the browser — the list route answers masked
+ * tails only — and only `https://` remotes are ever covered.
  */
 
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { resolveDshHome } from './settings.js'
 import type { CredentialMethod } from './wire.js'
@@ -24,7 +33,9 @@ import type { CredentialMethod } from './wire.js'
 /**
  * The Basic-auth name git sends when a token was stored without a username.
  * GitHub, GitLab and Gitee all accept any non-empty name for a personal access
- * token, and `oauth2` is the conventional placeholder.
+ * token, and `oauth2` is the conventional placeholder. The store format has no
+ * "blank username", so this value is what a blank one becomes on disk and is
+ * read back as blank again.
  */
 export const TOKEN_USERNAME = 'oauth2'
 
@@ -33,20 +44,20 @@ export interface GitCredential {
   /** Normalized remote host (`github.com`, `git.example.com:8443`). */
   host: string
   /** Basic-auth username (a real account name, or a vendor-form placeholder
-   * such as `x-access-token` / `oauth2`). */
+   * such as `x-access-token` / `oauth2`). Blank for a bare token. */
   username: string
   /** Token or password, verbatim (never returned to the client). */
   secret: string
   /** How the secret is meant to be used — informational for the UI; git
    * itself only sees the Basic header. */
   method: CredentialMethod
-  /** Epoch millis of the last save. */
+  /** Epoch millis of the last save (0 when unknown). */
   updatedAt: number
 }
 
 /** Load/save seam for the credential file (tests substitute an in-memory one). */
 export interface CredentialStore {
-  /** Absolute file the store persists to (for diagnostics/UI hints). */
+  /** Absolute file the store persists secrets to (for diagnostics/UI hints). */
   readonly path: string
   /** Every stored credential, one per host, sorted by host. A missing file
    * is the empty list; an unreadable/malformed one throws
@@ -65,12 +76,42 @@ export class CredentialStoreError extends Error {
 }
 
 /**
- * Resolve the credential file location: `<dsh-home>/git-credentials.json`.
+ * The retired 0021/0029 plugin-private file `<dsh-home>/git-credentials.json`.
+ * Read once by {@link migrateLegacyCredentialFile} and deleted afterwards.
  * @param home - user home directory seam.
  * @param envHome - `$DSH_HOME` environment value seam (blank = unset).
  */
 export function credentialFilePath(home: string, envHome: string | undefined): string {
   return join(resolveDshHome(home, envHome), 'git-credentials.json')
+}
+
+/**
+ * `~/.git-credentials` — the file git's `credential-store` helper reads and
+ * writes (`$HOME/.git-credentials` on every platform).
+ * @param home - user home directory seam.
+ */
+export function gitCredentialsFile(home: string): string {
+  return join(home, '.git-credentials')
+}
+
+/**
+ * The UI-only metadata sidecar: method and `updatedAt` per host. Never holds a
+ * secret; a missing or damaged file only costs the "how/when" columns.
+ * @param home - user home directory seam.
+ * @param envHome - `$DSH_HOME` environment value seam.
+ */
+export function credentialMetaFile(home: string, envHome: string | undefined): string {
+  return join(resolveDshHome(home, envHome), 'git-credentials.meta.json')
+}
+
+/**
+ * The generated gitconfig included from `~/.gitconfig`: one URL-scoped
+ * `helper = store` section per managed host.
+ * @param home - user home directory seam.
+ * @param envHome - `$DSH_HOME` environment value seam.
+ */
+export function credentialIncludeFile(home: string, envHome: string | undefined): string {
+  return join(resolveDshHome(home, envHome), 'git-credentials.include.gitconfig')
 }
 
 /** Why a user-typed host is not usable yet (undefined = fine). */
@@ -160,28 +201,6 @@ export function maskSecret(secret: string): string {
 }
 
 /**
- * The git config argv that authenticates network commands against the stored
- * hosts: one `http.<https-url>.extraHeader` per host. Git applies a
- * `http.<url>.*` section only to a matching remote URL, so injecting every
- * stored host at once cannot leak one host's header to another; only
- * `https://` URLs match (ssh/http never receive it).
- * @param entries - stored credentials (duplicates collapsed by host).
- * @returns the `-c <key>=<value>` pairs, ready to prepend to a subcommand.
- */
-export function authConfigArgs(entries: readonly GitCredential[]): readonly string[] {
-  // Collapse duplicates by host, LAST entry winning: a hand-edited file with
-  // two rows for one host must hand git the row the list route shows last.
-  const byHost = new Map<string, GitCredential>()
-  for (const entry of entries) byHost.set(entry.host, entry)
-  const args: string[] = []
-  for (const entry of byHost.values()) {
-    const basic = Buffer.from(`${basicUsername(entry)}:${entry.secret}`, 'utf8').toString('base64')
-    args.push('-c', `http.https://${entry.host}/.extraHeader=AUTHORIZATION: basic ${basic}`)
-  }
-  return args
-}
-
-/**
  * Insert or update one credential; the pair `(host, updatedAt)` changes,
  * everything else is replaced. An existing host keeps its position.
  * @param entries - current credentials.
@@ -208,17 +227,109 @@ export function sortCredentials(entries: readonly GitCredential[]): GitCredentia
   return [...entries].sort((left, right) => left.host.localeCompare(right.host))
 }
 
-/** The persisted document shape (versioned so a future migration can detect it). */
+/**
+ * Percent-encode one userinfo component the way git's store helper does:
+ * everything outside the RFC 3986 unreserved set becomes `%xx` (lowercase
+ * hex, matching `git credential approve`). `encodeURIComponent` would leave
+ * `!'()*` alone and git would then mis-split the line at a literal `@`.
+ * @param value - raw username or secret.
+ */
+export function encodeCredentialPart(value: string): string {
+  let encoded = ''
+  for (const byte of Buffer.from(value, 'utf8')) {
+    const char = String.fromCharCode(byte)
+    encoded += /[A-Za-z0-9\-._~]/.test(char) ? char : `%${byte.toString(16).padStart(2, '0')}`
+  }
+  return encoded
+}
+
+/**
+ * One `<scheme>://user:pass@host` line, ready for `~/.git-credentials`.
+ * @param entry - the credential to write.
+ */
+export function formatCredentialLine(entry: GitCredential): string {
+  return `https://${encodeCredentialPart(basicUsername(entry))}:${encodeCredentialPart(entry.secret)}@${entry.host}`
+}
+
+/** A `~/.git-credentials` file split into credentials and untouched lines. */
+export interface ParsedCredentials {
+  /** One credential per https host; a duplicated host keeps the LAST line,
+   * which is the line git's store helper would resolve to after a rewrite. */
+  readonly entries: GitCredential[]
+  /** Lines this store does not own (comments, ssh/http rows, malformed
+   * text). Written back verbatim so a hand-edited file survives a save. */
+  readonly others: string[]
+}
+
+/**
+ * Parse one `~/.git-credentials` line. Anything that is not an `https://`
+ * URL with a password is not ours (the store helper would not authenticate
+ * with it either).
+ * @param line - one non-empty line, already trimmed.
+ */
+function parseCredentialLine(line: string): GitCredential | undefined {
+  let url: URL
+  try {
+    url = new URL(line)
+  } catch {
+    return undefined
+  }
+  if (url.protocol !== 'https:') return undefined
+  if (url.password === '') return undefined
+  const host = normalizeCredentialHost(url.host)
+  if (host === undefined) return undefined
+  let username = url.username
+  let secret = url.password
+  try {
+    username = decodeURIComponent(username)
+  } catch {
+    // Keep the raw text; a literal `%` is legal in a username.
+  }
+  try {
+    secret = decodeURIComponent(secret)
+  } catch {
+    // Same for the secret.
+  }
+  if (username === TOKEN_USERNAME) username = ''
+  return {
+    host,
+    username,
+    secret,
+    method: username === '' ? 'token' : 'password',
+    updatedAt: 0,
+  }
+}
+
+/**
+ * Parse a `~/.git-credentials` document.
+ * @param text - raw file contents (BOM tolerated).
+ */
+export function parseGitCredentials(text: string): ParsedCredentials {
+  const byHost = new Map<string, GitCredential>()
+  const others: string[] = []
+  for (const raw of text.replace(/^\uFEFF/, '').split(/\r?\n/)) {
+    if (raw.trim() === '') continue
+    const entry = parseCredentialLine(raw.trim())
+    if (entry === undefined) {
+      others.push(raw)
+      continue
+    }
+    byHost.set(entry.host, entry)
+  }
+  return { entries: sortCredentials([...byHost.values()]), others }
+}
+
+/** The retired JSON document shape (read only, for the 0037 migration). */
 interface CredentialFile {
   version: 1
   credentials: GitCredential[]
 }
 
 /**
- * Parse the credential file. Unknown extra fields are tolerated (a
- * hand-edited file), but a malformed entry is an error rather than a silent
- * drop — losing a credential behind the user's back is worse than an
- * explicit message. Hosts are re-normalized and de-duplicated.
+ * Parse the retired `<dsh-home>/git-credentials.json`. Unknown extra fields
+ * are tolerated (a hand-edited file), but a malformed entry is an error rather
+ * than a silent drop — losing a credential during the one-time migration is
+ * worse than an explicit message.
  * @param text - raw file contents.
  * @param path - file path (for the error message).
  */
@@ -253,46 +364,277 @@ export function parseCredentialFile(text: string, path = 'git-credentials.json')
   return sortCredentials([...byHost.values()])
 }
 
-/**
- * Serialize the credential set for the file.
- * @param entries - stored credentials.
- */
-export function serializeCredentialFile(entries: readonly GitCredential[]): string {
-  const document: CredentialFile = { version: 1, credentials: sortCredentials(entries) }
-  return `${JSON.stringify(document, null, 2)}\n`
+/** The metadata sidecar document: no secret, only display facts. */
+interface CredentialMetaFile {
+  version: 1
+  credentials: Array<{ host: string; method: CredentialMethod; updatedAt: number }>
 }
 
 /**
- * The real file-backed store: atomic replace, `0600` where the platform
- * honours it. A missing file reads as "no credentials yet".
- * @param path - absolute credential file path.
+ * Read the metadata sidecar. A missing, empty or damaged file reads as "no
+ * metadata": the credentials themselves still load, only the method/age
+ * columns fall back to their inferred values.
+ * @param path - absolute meta file path.
  */
-export function createCredentialStore(path: string): CredentialStore {
+async function readCredentialMeta(path: string): Promise<Map<string, { method: CredentialMethod; updatedAt: number }>> {
+  let text: string
+  try {
+    text = await readFile(path, 'utf8')
+  } catch {
+    return new Map()
+  }
+  if (text.trim() === '') return new Map()
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return new Map()
+  }
+  const raw = typeof parsed === 'object' && parsed !== null
+    ? (parsed as Record<string, unknown>).credentials
+    : undefined
+  if (!Array.isArray(raw)) return new Map()
+  const byHost = new Map<string, { method: CredentialMethod; updatedAt: number }>()
+  for (const item of raw) {
+    if (typeof item !== 'object' || item === null) continue
+    const record = item as Record<string, unknown>
+    const host = typeof record.host === 'string' ? normalizeCredentialHost(record.host) : undefined
+    const method = record.method
+    if (host === undefined || (method !== 'token' && method !== 'password')) continue
+    const updatedAt = typeof record.updatedAt === 'number' && Number.isFinite(record.updatedAt) ? record.updatedAt : 0
+    byHost.set(host, { method, updatedAt })
+  }
+  return byHost
+}
+
+/** Serialize the metadata sidecar. */
+function serializeCredentialMeta(entries: readonly GitCredential[]): string {
+  const document: CredentialMetaFile = {
+    version: 1,
+    credentials: sortCredentials(entries).map(entry => ({
+      host: entry.host,
+      method: entry.method,
+      updatedAt: entry.updatedAt,
+    })),
+  }
+  return `${JSON.stringify(document, null, 2)}\n`
+}
+
+/** Write-then-rename so a crashed save never truncates the real file. */
+export async function writeFileAtomic(path: string, text: string, mode?: number): Promise<void> {
+  await mkdir(dirname(path), { recursive: true })
+  const temp = `${path}.${String(process.pid)}.${String(Date.now())}.tmp`
+  try {
+    await writeFile(temp, text, { encoding: 'utf8', ...(mode === undefined ? {} : { mode }) })
+    await rename(temp, path)
+  } catch (error) {
+    await rm(temp, { force: true }).catch(() => undefined)
+    throw error
+  }
+}
+
+/** Read a text file, treating "missing" as empty. */
+async function readTextOrEmpty(path: string): Promise<string> {
+  try {
+    return await readFile(path, 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return ''
+    throw new CredentialStoreError(path, `could not be read (${error instanceof Error ? error.message : String(error)})`)
+  }
+}
+
+/**
+ * The real store over `~/.git-credentials`. The secret lines are the git
+ * store format; the sibling metadata file carries method/updatedAt only.
+ * A missing file reads as "no credentials yet".
+ * @param home - user home directory seam.
+ * @param envHome - `$DSH_HOME` environment value seam.
+ */
+export function createLocalCredentialStore(home: string, envHome: string | undefined): CredentialStore {
+  const path = gitCredentialsFile(home)
+  const metaPath = credentialMetaFile(home, envHome)
   return {
     path,
     load: async (): Promise<GitCredential[]> => {
-      let text: string
-      try {
-        text = await readFile(path, 'utf8')
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
-        throw new CredentialStoreError(path, `could not be read (${error instanceof Error ? error.message : String(error)})`)
-      }
-      if (text.trim() === '') return []
-      return parseCredentialFile(text, path)
+      const { entries } = parseGitCredentials(await readTextOrEmpty(path))
+      const meta = await readCredentialMeta(metaPath)
+      return entries.map(entry => {
+        const extra = meta.get(entry.host)
+        return extra === undefined ? entry : { ...entry, method: extra.method, updatedAt: extra.updatedAt }
+      })
     },
     save: async (entries: readonly GitCredential[]): Promise<void> => {
-      const directory = dirname(path)
-      await mkdir(directory, { recursive: true })
-      // Write-then-rename keeps a crashed save from truncating the real file.
-      const temp = `${path}.${String(process.pid)}.${String(Date.now())}.tmp`
+      // Keep the lines we do not own (ssh/http rows, comments) so a save
+      // never rewrites somebody else's credential file.
+      const { others } = parseGitCredentials(await readTextOrEmpty(path))
+      const lines = [...others, ...sortCredentials(entries).map(formatCredentialLine)]
       try {
-        await writeFile(temp, serializeCredentialFile(entries), { encoding: 'utf8', mode: 0o600 })
-        await rename(temp, path)
+        await writeFileAtomic(path, lines.length === 0 ? '' : `${lines.join('\n')}\n`, 0o600)
+        await writeFileAtomic(metaPath, serializeCredentialMeta(entries), 0o600)
       } catch (error) {
-        await rm(temp, { force: true }).catch(() => undefined)
         throw new CredentialStoreError(path, `could not be written (${error instanceof Error ? error.message : String(error)})`)
       }
     },
   }
+}
+
+/**
+ * One-time 0037 migration: import the retired plugin-private JSON into the
+ * local store (plugin values win for a host they share), then delete the old
+ * file so there is exactly one place a secret lives.
+ *
+ * Idempotent: a missing legacy file is a no-op, and the file is removed only
+ * after the store write succeeded — a failed migration keeps the old file.
+ * @param home - user home directory seam.
+ * @param envHome - `$DSH_HOME` environment value seam.
+ * @param store - destination store.
+ * @returns true when a legacy file was imported and removed.
+ */
+export async function migrateLegacyCredentialFile(
+  home: string,
+  envHome: string | undefined,
+  store: CredentialStore,
+): Promise<boolean> {
+  const legacy = credentialFilePath(home, envHome)
+  let text: string
+  try {
+    text = await readFile(legacy, 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
+    throw new CredentialStoreError(legacy, `could not be read (${error instanceof Error ? error.message : String(error)})`)
+  }
+  const imported = text.trim() === '' ? [] : parseCredentialFile(text, legacy)
+  if (imported.length > 0) {
+    const current = await store.load()
+    const merged = imported.reduce((entries, entry) => upsertCredential(entries, entry), current)
+    await store.save(merged)
+  }
+  await rm(legacy, { force: true })
+  return true
+}
+
+/**
+ * The generated include file's contents: one URL-scoped section per host that
+ * resets any inherited helper for that exact URL and then installs the
+ * built-in `store` helper. The empty `helper =` line is what beats a
+ * user-level helper (`gh`, GCM) configured for the same host.
+ * @param hosts - managed remote hosts (already normalized).
+ */
+export function credentialIncludeBody(hosts: readonly string[]): string {
+  const lines = [
+    '# Generated by dsh-git-branch (decision 0037). Do not edit:',
+    '# every credential save rewrites this file.',
+  ]
+  for (const host of [...new Set(hosts)].sort()) {
+    lines.push('', `[credential "https://${host}/"]`, '\thelper =', '\thelper = store')
+  }
+  return `${lines.join('\n')}\n`
+}
+
+/** Compare two config paths the way git resolves them (case-insensitive on
+ * Windows in practice; slashes and surrounding quotes normalized here). */
+function normalizeConfigPath(value: string): string {
+  return value
+    .trim()
+    .replace(/^"(.*)"$/, '$1')
+    .replace(/\\/g, '/')
+    .replace(/\/+$/, '')
+    .toLowerCase()
+}
+
+/**
+ * Whether `~/.gitconfig` already includes the generated file. Matched loosely
+ * (any `path = <X>` line pointing at it) so a hand-reformatted include — or
+ * one with forward slashes on Windows — is not added a second time.
+ * @param text - current `~/.gitconfig` contents.
+ * @param includePath - the generated file.
+ */
+export function gitconfigHasInclude(text: string, includePath: string): boolean {
+  const wanted = normalizeConfigPath(includePath)
+  for (const line of text.split(/\r?\n/)) {
+    const match = /^\s*path\s*=\s*(.*)$/i.exec(line)
+    if (match !== null && normalizeConfigPath(match[1] ?? '') === wanted) return true
+  }
+  return false
+}
+
+/**
+ * Append the `[include] path = …` section, leaving every existing byte alone.
+ * @param text - current `~/.gitconfig` contents.
+ * @param includePath - the generated file.
+ */
+export function appendGitconfigInclude(text: string, includePath: string): string {
+  const body = `[include]\n\tpath = ${includePath.replace(/\\/g, '/')}\n`
+  if (text.trim() === '') return body
+  return text.endsWith('\n') ? `${text}${body}` : `${text}\n${body}`
+}
+
+/**
+ * Idempotently ensure `~/.gitconfig` includes the generated file. Rewrites
+ * atomically, preserving the file's existing mode; a missing file is created.
+ * @param gitconfigPath - user global config (`<home>/.gitconfig`).
+ * @param includePath - the generated file.
+ * @returns true when the file had to be changed.
+ */
+export async function ensureGitconfigInclude(gitconfigPath: string, includePath: string): Promise<boolean> {
+  let text = ''
+  let mode: number | undefined
+  try {
+    text = await readFile(gitconfigPath, 'utf8')
+    mode = (await stat(gitconfigPath)).mode & 0o777
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+  if (gitconfigHasInclude(text, includePath)) return false
+  await writeFileAtomic(gitconfigPath, appendGitconfigInclude(text, includePath), mode)
+  return true
+}
+
+/**
+ * Remove the include section pointing at the generated file (plugin teardown).
+ * Every other line is preserved verbatim.
+ * @param text - current `~/.gitconfig` contents.
+ * @param includePath - the generated file.
+ */
+export function stripGitconfigInclude(text: string, includePath: string): string {
+  const wanted = normalizeConfigPath(includePath)
+  const lines = text.split(/\r?\n/)
+  const kept: string[] = []
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] ?? ''
+    if (/^\s*\[include\]\s*$/i.test(line)) {
+      let end = index + 1
+      let matched = false
+      while (end < lines.length && !/^\s*\[/.test(lines[end] ?? '')) {
+        const match = /^\s*path\s*=\s*(.*)$/i.exec(lines[end] ?? '')
+        if (match !== null && normalizeConfigPath(match[1] ?? '') === wanted) matched = true
+        end += 1
+      }
+      if (matched) {
+        index = end - 1
+        continue
+      }
+    }
+    kept.push(line)
+  }
+  return kept.join('\n')
+}
+
+/**
+ * Remove the generated include from `~/.gitconfig`. Best effort: a teardown
+ * must not throw, and an already-clean file is left untouched.
+ * @param gitconfigPath - user global config (`<home>/.gitconfig`).
+ * @param includePath - the generated file.
+ */
+export async function removeGitconfigInclude(gitconfigPath: string, includePath: string): Promise<void> {
+  let text: string
+  let mode: number | undefined
+  try {
+    text = await readFile(gitconfigPath, 'utf8')
+    mode = (await stat(gitconfigPath)).mode & 0o777
+  } catch {
+    return
+  }
+  if (!gitconfigHasInclude(text, includePath)) return
+  await writeFileAtomic(gitconfigPath, stripGitconfigInclude(text, includePath), mode)
 }

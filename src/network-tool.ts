@@ -1,14 +1,11 @@
 /**
  * The model-facing `git_network` tool (host half).
  *
- * The credentials panel stores one token per remote host and makes it work on
- * two channels: the panel's own fetch / pull / push routes (`-c
- * http.<url>.extraHeader=…`, see `authConfigArgs`) and the environment bridge
- * the host installs for the shells it spawns (`shell-bridge.ts`). This tool is
- * the third, explicit one: it runs ONE git network command with the same
- * `authConfigArgs` the routes use, so a session reliably pushes as the account
- * the user configured and the secret never enters the conversation — including
- * on a host that predates the bridge.
+ * The credentials panel manages the machine's own `~/.git-credentials`
+ * (decision 0037), scoped per host through a generated include that
+ * `~/.gitconfig` pulls in. Because that is git's standard `credential-store`
+ * channel, this tool needs no injection of its own: it runs ONE git network
+ * command and git resolves the host exactly as it would in a plain shell.
  *
  * It is deliberately narrower than a shell wrapper: a fixed subcommand
  * allow-list (fetch / pull / push / ls-remote), no force/delete refspecs, no
@@ -22,10 +19,8 @@
 
 import { isAbsolute } from 'node:path'
 import {
-  authConfigArgs,
   basicUsername,
-  createCredentialStore,
-  credentialFilePath,
+  createLocalCredentialStore,
   type CredentialStore,
   type GitCredential,
 } from './credentials.js'
@@ -233,20 +228,16 @@ export function renderGitNetwork(value: GitNetworkValue): string {
  */
 export function gitNetworkTool(deps: GitNetworkToolDeps): GitNetworkTool {
   const storeOf = (): CredentialStore =>
-    deps.credentialsService?.store ?? deps.store ?? createCredentialStore(credentialFilePath(deps.home(), deps.envHome()))
+    deps.credentialsService?.store ?? deps.store ?? createLocalCredentialStore(deps.home(), deps.envHome())
   const exec = deps.exec ?? childProcessExec
 
   return {
     name: GIT_NETWORK_TOOL_NAME,
     description: 'Run ONE git network command (fetch, pull, push or ls-remote) inside a repository with the '
-      + 'plugin\'s stored Git credentials injected, so the command authenticates as the account configured in the '
+      + 'Git credentials managed for the remote host, so the command authenticates as the account configured in the '
       + 'Git credential panel instead of whatever the machine\'s git credential helper happens to hold. Prefer it for '
-      + 'every push/fetch/pull: the credential is injected explicitly and redacted from the output, while a plain '
-      + 'shell `git push` only reaches these credentials through the environment bridge the plugin host installs '
-      + 'for the shells it spawns. That bridge is absent in an older host or in a terminal started outside it; there '
-      + 'git clears the machine helper chain too, so an unconfigured host fails fast with a "terminal prompts '
-      + 'disabled" error instead of opening a credential dialog nobody can answer. Pass the git '
-      + 'arguments subcommand-first, for example ["push"], ["fetch", "--all", "--prune"] or '
+      + 'every push/fetch/pull: output is redacted from the tool result. Pass the git arguments subcommand-first, '
+      + 'for example ["push"], ["fetch", "--all", "--prune"] or '
       + '["push", "origin", "main"]. Force/delete refspecs, --force/--delete/--mirror/--prune and '
       + '--upload-pack/--receive-pack style options are rejected by design. The secret itself never appears in the '
       + 'result: only exit status, redacted stdout/stderr and the hosts that were authenticated.',
@@ -298,7 +289,10 @@ export function gitNetworkTool(deps: GitNetworkToolDeps): GitNetworkTool {
       }
 
       const hosts = [...new Set(entries.map(entry => entry.host))].sort()
-      const result = await exec('git', [...authConfigArgs(entries), ...request.args], {
+      // No credential argv: git authenticates through the URL-scoped
+      // `helper = store` include that 0037 installs into `~/.gitconfig`, so
+      // the same token serves this command and a plain shell `git push`.
+      const result = await exec('git', request.args, {
         cwd: request.repoPath,
         timeoutMs: NETWORK_TIMEOUT_MS,
       })

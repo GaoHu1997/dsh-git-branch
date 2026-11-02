@@ -7,9 +7,10 @@
 import { describe, expect, it } from 'vitest'
 import type { Exec, ExecResult } from '../src/git.ts'
 import type { CredentialStore, GitCredential } from '../src/credentials.ts'
+import type { LocalImportReport } from '../src/local-import.ts'
 import {
-  handleCredentials, handleCredentialsDelete, handleCredentialsSave, handleFetch, handleRemote, handleRemotes,
-  type RouteDeps,
+  handleCredentials, handleCredentialsDelete, handleCredentialsImport, handleCredentialsSave, handleFetch,
+  handleRemote, handleRemotes, type RouteDeps,
 } from '../src/routes.ts'
 
 /** Repo facts as `probeRepo` reads them for the fictional /repo checkout. */
@@ -71,7 +72,7 @@ function bridgedDeps(
 function memoryStore(entries: readonly GitCredential[] = []): CredentialStore {
   let state = [...entries]
   return {
-    path: '/mem/git-credentials.json',
+    path: '/mem/.git-credentials',
     load: async () => state,
     save: async next => { state = [...next] },
   }
@@ -246,20 +247,101 @@ describe('credential routes', () => {
   })
 })
 
+/** deps whose importer is scripted, so the route test never shells out to git. */
+function importDeps(
+  report: LocalImportReport,
+  options: { store?: CredentialStore; refresh?: () => Promise<void>; seen?: { hosts?: readonly string[] | undefined } } = {},
+): RouteDeps {
+  return {
+    ...bridgedDeps(repoExec({}), options.store ?? memoryStore([GITHUB]), options.refresh ?? (async () => {})),
+    importLocalCredentials: async (_store, hosts) => {
+      if (options.seen !== undefined) options.seen.hosts = hosts
+      return report
+    },
+  }
+}
+
+/** A report for the cases where the machine had nothing new to offer. */
+const NOTHING: LocalImportReport = { imported: [], skipped: [], failed: [] }
+
+describe('credentials import route', () => {
+  it('answers with the fresh list and the per-host report, and refreshes the bridge', async () => {
+    let refreshes = 0
+    const report: LocalImportReport = {
+      imported: [{ host: 'github.com', username: 'octo', method: 'token' }],
+      skipped: ['gitee.com'],
+      failed: [{ host: 'gitlab.com', error: 'the credential helper returned no secret' }],
+    }
+    const result = await handleCredentialsImport(importDeps(report, { refresh: async () => { refreshes += 1 } }), {})
+    expect(result).toMatchObject({
+      status: 200,
+      body: {
+        imported: report.imported,
+        skipped: ['gitee.com'],
+        failed: report.failed,
+        credentials: [{ host: 'github.com', username: 'octo', method: 'token', secretMask: '****cret' }],
+      },
+    })
+    expect(refreshes).toBe(1)
+    expect(JSON.stringify(result.body)).not.toContain('ghp_secret')
+  })
+
+  it('skips the bridge refresh when nothing was imported', async () => {
+    let refreshes = 0
+    const result = await handleCredentialsImport(importDeps(NOTHING, { refresh: async () => { refreshes += 1 } }), {})
+    expect(result).toMatchObject({ status: 200, body: { imported: [], skipped: [], failed: [] } })
+    expect(refreshes).toBe(0)
+  })
+
+  it('passes trimmed explicit hosts, and leaves the candidate choice to git when none are named', async () => {
+    const seen: { hosts?: readonly string[] | undefined } = {}
+    await handleCredentialsImport(importDeps(NOTHING, { seen }), { hosts: [' GitHub.com ', ' '] })
+    expect(seen.hosts).toEqual(['GitHub.com'])
+    await handleCredentialsImport(importDeps(NOTHING, { seen }), {})
+    expect(seen.hosts).toBeUndefined()
+  })
+
+  it('rejects a malformed body before touching the store', async () => {
+    const deps = importDeps(NOTHING)
+    const errorOf = (value: unknown): string => (value as { error: string }).error
+
+    const notObject = await handleCredentialsImport(deps, 'github.com')
+    expect(notObject.status).toBe(400)
+    expect(errorOf(notObject.body)).toContain('must be a JSON object')
+
+    const arrayBody = await handleCredentialsImport(deps, ['github.com'])
+    expect(arrayBody.status).toBe(400)
+
+    const unknownKey = await handleCredentialsImport(deps, { host: 'github.com' })
+    expect(unknownKey.status).toBe(400)
+    expect(errorOf(unknownKey.body)).toContain('unknown body key "host"')
+
+    const notArray = await handleCredentialsImport(deps, { hosts: 'github.com' })
+    expect(notArray.status).toBe(400)
+    expect(errorOf(notArray.body)).toContain('must be an array of remote hosts')
+
+    const mixed = await handleCredentialsImport(deps, { hosts: ['github.com', 5] })
+    expect(mixed.status).toBe(400)
+
+    const empty = await handleCredentialsImport(deps, { hosts: [' '] })
+    expect(empty.status).toBe(400)
+    expect(errorOf(empty.body)).toContain('must not be empty')
+  })
+})
+
 describe('auth injection', () => {
-  it('prefixes the fetch with the stored host header', async () => {
+  it('fetches without any -c header — the include in ~/.gitconfig carries the credential', async () => {
     const calls: string[] = []
     const exec = repoExec({ 'fetch --all --prune': {} }, calls)
     const result = await handleFetch(depsWith(exec, memoryStore([GITHUB])), { repoPath: '/repo' })
     expect(result.status).toBe(200)
-    const encoded = Buffer.from('octo:ghp_secret').toString('base64')
     const fetchCall = calls.find(call => call.endsWith('fetch --all --prune'))
-    expect(fetchCall).toBe(`-c http.https://github.com/.extraHeader=AUTHORIZATION: basic ${encoded} fetch --all --prune`)
+    expect(fetchCall).toBe('fetch --all --prune')
   })
 
   it('still fetches when the credential store is unreadable', async () => {
     const broken: CredentialStore = {
-      path: '/mem/git-credentials.json',
+      path: '/mem/.git-credentials',
       load: async () => { throw new Error('unreadable') },
       save: async () => {},
     }

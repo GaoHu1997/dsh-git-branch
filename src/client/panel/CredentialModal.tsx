@@ -27,7 +27,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { CredentialEntryView } from '../../wire.ts'
 import { BROWSER_SIGN_IN_HOSTS } from '../../wire.ts'
-import { requestCredentials, requestDeleteCredential, requestOAuthPoll, requestOAuthStart, requestSaveCredential } from '../api.ts'
+import { requestCredentials, requestDeleteCredential, requestImportCredentials, requestOAuthPoll, requestOAuthStart, requestSaveCredential } from '../api.ts'
 import type { GitPanelTranslator } from '../panel-types.ts'
 import css from '../GitHistoryPanel.module.css'
 
@@ -97,6 +97,10 @@ export function CredentialModal(props: CredentialModalProps): JSX.Element {
   const [seed, setSeed] = useState<EditorSeed>()
   const [formError, setFormError] = useState<string | undefined>()
   const [busy, setBusy] = useState(false)
+  /** The one-click machine import runs on its own flag: it is read-only on the
+   * form, so it must not disable editing, and a slow helper (a cold keychain
+   * prompt) must not look like a hung save. */
+  const [importing, setImporting] = useState(false)
   /** Two-step delete: the first click only arms the row. */
   const [confirmHost, setConfirmHost] = useState<string | undefined>()
   /** The editor starts collapsed; the "+" icon in the header row opens it,
@@ -331,8 +335,34 @@ export function CredentialModal(props: CredentialModalProps): JSX.Element {
     [applyEditor, busy, pushToast, seed, t],
   )
 
-  const title = seed === undefined ? t('cred.add') : t('cred.edit')
+  /** Adopt what this machine's own git helpers already answer for. The host
+   * decides which hosts to probe (the user's gitconfig names them) and skips
+   * the ones the panel already manages, so this is always safe to click. */
+  const importLocal = useCallback(async (): Promise<void> => {
+    if (busy || importing) return
+    setImporting(true)
+    const result = await requestImportCredentials()
+    setImporting(false)
+    if (!result.ok) {
+      pushToast(result.error, 'error')
+      return
+    }
+    setEntries(result.credentials)
+    if (result.imported.length === 0) {
+      pushToast(t('cred.importNone'), result.failed.length === 0 ? 'success' : 'error')
+      return
+    }
+    pushToast(
+      t('cred.importDone', {
+        count: result.imported.length,
+        skipped: result.skipped.length,
+        failed: result.failed.length,
+      }),
+      'success',
+    )
+  }, [busy, importing, pushToast, t])
 
+  const title = seed === undefined ? t('cred.add') : t('cred.edit')
   return (
     <Modal
       open
@@ -343,6 +373,15 @@ export function CredentialModal(props: CredentialModalProps): JSX.Element {
     >
       <div className={css.credTop}>
         <p className={css.credHint}>{t('cred.hint')}</p>
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={busy || importing}
+          title={t('cred.import')}
+          onClick={() => { void importLocal() }}
+        >
+          {importing ? t('cred.importing') : t('cred.import')}
+        </Button>
         <button
           type="button"
           className={css.credAdd}
