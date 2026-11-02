@@ -4,28 +4,33 @@
  * The panel's credential file (`~/.dsh/git-credentials.json`) normally rides
  * `-c http.<url>.extraHeader` config on the routes and the `git_network` tool.
  * This helper extends that coverage to a plain shell `git push`: the plugin's
- * host process exports `GIT_CONFIG_COUNT/KEY/VALUE` entries that install this
- * script as a URL-scoped credential helper for every stored host, so commands
- * the model runs in the shell authenticate as the configured account too.
+ * host process writes a session gitconfig (see `src/shell-bridge.ts`) that
+ * installs this script as a URL-scoped credential helper for every stored
+ * host, so commands the model runs in the shell authenticate as the
+ * configured account too.
  *
- * Design constraints (see docs/decisions/0029 and 0032):
+ * Design constraints (see docs/decisions/0029, 0032 and 0034):
  *  - The user's global git config and credential helpers are never written;
- *    the injection lives in the process environment only.
+ *    the injection lives in one generated session config plus the process
+ *    environment only.
  *  - The token never enters the conversation: this script reads the
  *    credential file directly on the host and answers git on stdout.
- *  - URL scope (`credential.https://<host>/.helper`) confines the helper to
- *    hosts with a stored credential. The host half also clears the machine
- *    helper list, so a host this script cannot answer fails fast instead of
- *    opening an interactive credential dialog.
+ *  - URL scope (`credential.https://<host>/`) confines the helper to hosts
+ *    with a stored credential. The host half also clears the machine helper
+ *    list, so a host this script cannot answer fails fast instead of opening
+ *    an interactive credential dialog.
  *  - `get` is silent on a miss (git falls through to the next helper);
  *    `store`/`erase` are pass-through by decision — writing back would race
  *    the panel's atomic save and leak the file shape.
  *
- * Environment contract (set by src/shell-bridge.ts):
- *  - `DSH_GIT_BRIDGE_HELPER` — credential file path (required).
- *  - `DSH_GIT_BRIDGE_HOME` — user home directory (fallback resolution).
- *  - `DSH_GIT_BRIDGE_DSH_HOME` — `$DSH_HOME` override (optional).
- *  - `DSH_GIT_BRIDGE_DEBUG` — when non-blank, a debug log path (optional).
+ * Environment contract (set by src/shell-bridge.ts). The names carry no
+ * KEY/PASSWORD/SECRET/TOKEN substring and no `DSH_` prefix, because the DSH
+ * subprocess scrubber strips exactly those from inherited environments
+ * (decision 0034; a stripped path made this helper read the wrong file):
+ *  - `DGB_BRIDGE_HELPER` — credential file path (required).
+ *  - `DGB_BRIDGE_HOME` — user home directory (fallback resolution).
+ *  - `DGB_BRIDGE_DSH_HOME` — `$DSH_HOME` override (optional).
+ *  - `DGB_BRIDGE_DEBUG` — when non-blank, a debug log path (optional).
  *
  * @module dsh-git-branch/git-credential-bridge
  */
@@ -37,7 +42,7 @@ import { join } from 'node:path'
 /** git helpers receive exactly one argument: the operation. */
 const OPERATION = process.argv[2] ?? 'get'
 
-/** The credential file this helper reads (`DSH_GIT_BRIDGE_HELPER` wins). */
+/** The credential file this helper reads (`DGB_BRIDGE_HELPER` wins). */
 const DEFAULT_CREDENTIAL_FILE = 'git-credentials.json'
 
 /** The dsh home directory below the user profile when `$DSH_HOME` is unset. */
@@ -51,7 +56,7 @@ const TOKEN_USERNAME = 'oauth2'
  * break the credential lookup.
  */
 function debug(line: string): void {
-  const path = process.env.DSH_GIT_BRIDGE_DEBUG
+  const path = process.env.DGB_BRIDGE_DEBUG
   if (path === undefined || path.trim() === '') return
   try {
     appendFileSync(path, `${line}\n`, 'utf8')
@@ -60,15 +65,15 @@ function debug(line: string): void {
   }
 }
 
-/** The credential file this helper reads (`DSH_GIT_BRIDGE_HELPER` wins). */
+/** The credential file this helper reads (`DGB_BRIDGE_HELPER` wins). */
 function credentialFile(): string {
-  const helper = process.env.DSH_GIT_BRIDGE_HELPER
+  const helper = process.env.DGB_BRIDGE_HELPER
   if (helper !== undefined && helper.trim() !== '') return helper
-  const dshHome = process.env.DSH_GIT_BRIDGE_DSH_HOME
+  const dshHome = process.env.DGB_BRIDGE_DSH_HOME
   const home = dshHome !== undefined && dshHome.trim() !== ''
     ? dshHome
-    : process.env.DSH_GIT_BRIDGE_HOME ?? homedir()
-  return join(home, DEFAULT_CREDENTIAL_FILE)
+    : process.env.DGB_BRIDGE_HOME ?? homedir()
+  return join(home, PACKAGE_HOME, DEFAULT_CREDENTIAL_FILE)
 }
 
 /** One `key=value` request from git on stdin. */

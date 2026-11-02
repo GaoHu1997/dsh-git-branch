@@ -48,5 +48,6 @@
 - [0029 — AI 可用的带凭据 Git 网络工具（git_network）](0029-ai-network-credentials-tool.md)
 - [0030 — 发布 v1.0.9 补丁版本](0030-release-v1.0.9.md)
 - [0031 — git_network 测试用绝对路径改为平台无关](0031-cross-platform-network-tool-test.md)
-- [0032 — shell 里的 `git push` 也用插件密钥（环境变量桥）](0032-shell-git-credential-bridge.md)
+- [0032 — shell 里的 `git push` 也用插件密钥（环境变量桥）](0032-shell-git-credential-bridge.md)（`GIT_CONFIG_KEY/VALUE_*` 注入通道已被 0034 取代）
 - [0033 — 发布 v1.0.10 补丁版本](0033-release-v1.0.10.md)
+- [0034 — shell 凭据桥改用 GIT_CONFIG_GLOBAL 会话配置，凭据入口收敛为服务](0034-shell-gitconfig-channel-and-credential-service.md)

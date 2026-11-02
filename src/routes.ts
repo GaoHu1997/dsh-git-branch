@@ -7,6 +7,7 @@ import { basename, dirname, join, resolve } from 'node:path'
 import { mkdir, readdir, rm, stat } from 'node:fs/promises'
 import { runPostCreateCopy, type CopyFilesSeams } from './copy-files.js'
 import { authConfigArgs, credentialFilePath, createCredentialStore, credentialHostIssue, credentialSecretIssue, credentialUsernameIssue, maskSecret, normalizeCredentialHost, removeCredential, sortCredentials, upsertCredential, type CredentialStore, type GitCredential } from './credentials.js'
+import type { CredentialService } from './credential-service.js'
 import { appendWorktreeExclude, fsExcludeSeams, GitError, addRemote, addWorktree, addWorktreeCutout, collectAiDiff, commitFiles, commitIndex, createBranch, createTag, cutoutBranchName, deleteBranch, fetchAll, fsDirExists, inspectWorktree, isAbsoluteDir, isStageablePath, listRemotes, listTagNames, logHistory, probeRepo, probeWorkspaceGit, pushTag, removeRemote, removeWorktree, renameBranch, resolveBranch, resolvePushRemote, pushBranch, setRemoteUrl, stagePaths, switchBranch, updateBranch, workingChanges, type DirExists, type ExcludeSeams, type Exec } from './git.js'
 import { ACCEL_DEFAULT_URL, accelerateUrlError, isAbsoluteConfigPath, normalizeAccelerateUrl, remoteNameIssue, remoteUrlIssue, sanitizeBranchDir, type RemoteNameIssue, type RemoteUrlIssue } from './normalize.js'
 import { deviceFlowClientId, isDeviceFlowHost, pollDeviceFlow, startDeviceFlow, type DeviceFlowPoll } from './oauth.js'
@@ -54,6 +55,9 @@ export interface RouteDeps {
   /** Global per-host credential store. Absent = the fs-backed store at the
    * resolved dsh home; tests substitute an in-memory one. */
   credentialsStore?: CredentialStore
+  /** The single credential entry point (decision 0034): when wired, it owns
+   * the store and both injection channels, and the seams below are ignored. */
+  credentialsService?: CredentialService
   /** Re-derive the shell credential bridge after the store changed (absent =
    * a host that does not provide the bridge; tests omit it). */
   refreshShellBridge?: () => Promise<void>
@@ -109,10 +113,11 @@ function accelPrefix(deps: RouteDeps): string | undefined {
   return accelerateUrlError(url) === undefined ? normalizeAccelerateUrl(url) : undefined
 }
 
-/** The global credential store: the wired one, else the fs-backed file at the
- * resolved dsh home (`<dshHome>/git-credentials.json`). */
+/** The global credential store: the service's shared instance (decision 0034),
+ * else the wired store, else the fs-backed file at the resolved dsh home
+ * (`<dshHome>/git-credentials.json`). */
 function credentialStore(deps: RouteDeps): CredentialStore {
-  return deps.credentialsStore ?? createCredentialStore(credentialFilePath(deps.home(), deps.envHome()))
+  return deps.credentialsService?.store ?? deps.credentialsStore ?? createCredentialStore(credentialFilePath(deps.home(), deps.envHome()))
 }
 
 /**
@@ -123,6 +128,7 @@ function credentialStore(deps: RouteDeps): CredentialStore {
  * route is where the file problem surfaces.
  */
 async function authArgsFor(deps: RouteDeps): Promise<readonly string[]> {
+  if (deps.credentialsService !== undefined) return deps.credentialsService.authConfigArgs()
   try {
     return authConfigArgs(await credentialStore(deps).load())
   } catch {
@@ -138,9 +144,10 @@ async function authArgsFor(deps: RouteDeps): Promise<readonly string[]> {
  * save (an added host is not reachable, a deleted one may still be).
  */
 async function refreshBridge(deps: RouteDeps): Promise<void> {
-  if (deps.refreshShellBridge === undefined) return
+  const refresh = deps.credentialsService?.refreshShellEnv ?? deps.refreshShellBridge
+  if (refresh === undefined) return
   try {
-    await deps.refreshShellBridge()
+    await refresh()
   } catch {
     // Deliberately swallowed; see the contract above.
   }

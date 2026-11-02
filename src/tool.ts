@@ -23,6 +23,7 @@ import {
   type CredentialStore,
   type GitCredential,
 } from './credentials.js'
+import type { CredentialService } from './credential-service.js'
 
 /** Model-facing tool name. */
 export const GIT_CREDENTIALS_TOOL_NAME = 'git_credentials'
@@ -72,6 +73,9 @@ export interface GitCredentialsToolDeps {
   readonly envHome: () => string | undefined
   /** Store seam; the fs-backed store at the resolved path when absent. */
   readonly store?: CredentialStore
+  /** The single credential entry point (decision 0034); when wired its store
+   * is shared with the routes and the shell bridge. */
+  readonly credentialsService?: CredentialService
 }
 
 /** A tool definition as `ctx.tools.register` accepts it. */
@@ -116,7 +120,7 @@ export function renderGitCredentials(value: GitCredentialsValue): string {
  * @returns a definition ready for `ctx.tools.register`.
  */
 export function gitCredentialsTool(deps: GitCredentialsToolDeps): GitCredentialsTool {
-  const storeOf = (): CredentialStore => deps.store ?? createCredentialStore(credentialFilePath(deps.home(), deps.envHome()))
+  const storeOf = (): CredentialStore => deps.credentialsService?.store ?? deps.store ?? createCredentialStore(credentialFilePath(deps.home(), deps.envHome()))
 
   /** Read the store, folding a read failure into the result value. */
   const read = async (args: GitCredentialsArgs): Promise<GitCredentialsValue> => {

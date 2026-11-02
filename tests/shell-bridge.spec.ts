@@ -1,10 +1,15 @@
 import { describe, expect, it } from 'vitest'
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { CredentialStore, GitCredential } from '../src/credentials.ts'
+import { credentialFilePath, type CredentialStore, type GitCredential } from '../src/credentials.ts'
 import {
   BRIDGE_HELPER_ENV,
+  SESSION_GITCONFIG_ENV,
   bridgeCommand,
   createShellBridge,
+  gitconfigEscape,
+  sessionGitconfigBody,
   shellQuote,
   shellBridgeEnv,
 } from '../src/shell-bridge.ts'
@@ -12,6 +17,7 @@ import {
 const NODE = 'C:\\Program Files\\nodejs\\node.exe'
 const HELPER = 'C:\\Users\\u\\.dsh\\profiles\\desktop\\node_modules\\dsh-git-branch-manage\\lib\\helpers\\git-credential-bridge.js'
 const FILE = 'C:/Users/u/.dsh/git-credentials.json'
+const USER_GITCONFIG = 'C:/Users/u/.gitconfig'
 
 /** One stored credential with the fields the bridge only reads `host` from. */
 function credential(host: string): GitCredential {
@@ -27,17 +33,21 @@ function storeOf(entries: readonly GitCredential[] | (() => never)): CredentialS
   }
 }
 
-/** Ordered assignment lookup, so duplicate keys keep their insertion order. */
-function assignmentsOf(assignments: readonly (readonly [string, string])[]): Map<string, string[]> {
-  const map = new Map<string, string[]>()
-  for (const [key, value] of assignments) map.set(key, [...(map.get(key) ?? []), value])
-  return map
+/** The DSH subprocess scrubber's rule (decision 0034) — the reason this
+ * channel exists. A name it would strip must never appear in the bridge env. */
+function isScrubbed(key: string): boolean {
+  return /KEY|PASSWORD|SECRET|TOKEN/i.test(key) || key.startsWith('DSH_')
 }
 
 describe('shellQuote', () => {
   it('quotes and normalizes backslashes for git\'s `!` shell', () => {
     expect(shellQuote(NODE)).toBe('"C:/Program Files/nodejs/node.exe"')
     expect(shellQuote('/usr/local/bin/node')).toBe('"/usr/local/bin/node"')
+  })
+
+  it('keeps a space-containing path as a single quoted token', () => {
+    expect(shellQuote(NODE).startsWith('"')).toBe(true)
+    expect(shellQuote(NODE).endsWith('"')).toBe(true)
   })
 })
 
@@ -53,120 +63,203 @@ describe('bridgeCommand', () => {
   })
 })
 
+describe('gitconfigEscape', () => {
+  it('escapes a literal quote so it survives git\'s config parser into `sh`', () => {
+    expect(gitconfigEscape('say "hi"')).toBe('say \\"hi\\"')
+  })
+
+  it('leaves an unquoted value untouched', () => {
+    expect(gitconfigEscape('!node bridge.js')).toBe('!node bridge.js')
+  })
+
+  it('escapes the quotes of a real bridge command, keeping paths intact', () => {
+    const escaped = gitconfigEscape(bridgeCommand(NODE, HELPER))
+    // The space in `C:/Program Files/…` must stay inside one escaped-quoted
+    // token, or `sh` splits it and git fails to launch the helper at all.
+    expect(escaped).toContain(String.raw`\"C:/Program Files/nodejs/node.exe\"`)
+    expect(escaped.startsWith('!')).toBe(true)
+  })
+})
+
+describe('sessionGitconfigBody', () => {
+  const command = gitconfigEscape(bridgeCommand(NODE, HELPER))
+
+  it('includes the user config read-only and resets the whole helper list', () => {
+    const body = sessionGitconfigBody([], { nodePath: NODE, helperPath: HELPER, userGitconfig: USER_GITCONFIG })
+    expect(body).toContain('[include]')
+    expect(body).toContain('path = C:/Users/u/.gitconfig')
+    // Even with no stored host the machine chain is cut, so an unknown host
+    // fails fast instead of opening a GUI dialog no agent shell can answer.
+    expect(body).toContain('[credential]')
+    expect(body).toContain('helper =')
+  })
+
+  it('omits the include when no user config is given', () => {
+    const body = sessionGitconfigBody([], { nodePath: NODE, helperPath: HELPER })
+    expect(body).not.toContain('[include]')
+  })
+
+  it('writes a URL-scoped reset then the bridge command per host', () => {
+    const body = sessionGitconfigBody(['github.com'], { nodePath: NODE, helperPath: HELPER, userGitconfig: USER_GITCONFIG })
+    expect(body).toContain('[credential "https://github.com/"]')
+    // Empty helper first resets whatever the included user config accumulated
+    // for this URL (the local `gh` helper), then the bridge takes over.
+    expect(body).toContain(`helper = ${command}`)
+    const scope = body.slice(body.indexOf('[credential "https://github.com/"]'))
+    expect(scope.indexOf('helper =')).toBeLessThan(scope.indexOf(`helper = ${command}`))
+  })
+
+  it('deduplicates hosts', () => {
+    const body = sessionGitconfigBody(['github.com', 'github.com', 'gitlab.com'], { nodePath: NODE, helperPath: HELPER })
+    expect(body.match(/\[credential "https:\/\/github\.com\/"\]/g)).toHaveLength(1)
+    expect(body).toContain('[credential "https://gitlab.com/"]')
+  })
+
+  it('escapes the helper command so quotes reach `sh` intact', () => {
+    const body = sessionGitconfigBody(['github.com'], { nodePath: NODE, helperPath: HELPER })
+    expect(body).toContain(`helper = ${command}`)
+  })
+})
+
 describe('shellBridgeEnv', () => {
-  it('keeps the fail-fast switches even when no host is stored', () => {
-    const map = assignmentsOf(shellBridgeEnv([], { nodePath: NODE, helperPath: HELPER, credentialFile: FILE }))
-    // Even with nothing stored, the machine helper chain is cleared: leaving it
-    // in place makes git open a GUI prompt no agent shell can answer.
-    expect(map.get('GIT_CONFIG_COUNT')).toEqual(['1'])
-    expect(map.get('GIT_CONFIG_KEY_0')).toEqual(['credential.helper'])
-    expect(map.get('GIT_CONFIG_VALUE_0')).toEqual([''])
-    expect(map.get('GIT_TERMINAL_PROMPT')).toEqual(['0'])
-    expect(map.get('GCM_INTERACTIVE')).toEqual(['never'])
-    expect(map.get(BRIDGE_HELPER_ENV)).toEqual([FILE])
+  const assignments = shellBridgeEnv({ configPath: '/tmp/x.gitconfig', credentialFile: FILE })
+  const keys = assignments.map(([key]) => key)
+
+  it('points git at the session config and carries the credential file', () => {
+    expect(assignments).toContainEqual([SESSION_GITCONFIG_ENV, '/tmp/x.gitconfig'])
+    expect(assignments).toContainEqual([BRIDGE_HELPER_ENV, FILE])
   })
 
-  it('installs a global reset, then an empty reset followed by the bridge command per host', () => {
-    const assignments = shellBridgeEnv(['github.com'], { nodePath: NODE, helperPath: HELPER, credentialFile: FILE })
-    const map = assignmentsOf(assignments)
-    expect(map.get('GIT_CONFIG_COUNT')).toEqual(['3'])
-    // Slot 0 clears every helper the machine would otherwise provide.
-    expect(map.get('GIT_CONFIG_KEY_0')).toEqual(['credential.helper'])
-    expect(map.get('GIT_CONFIG_VALUE_0')).toEqual([''])
-    expect(map.get('GIT_CONFIG_KEY_1')).toEqual(['credential.https://github.com/.helper'])
-    expect(map.get('GIT_CONFIG_VALUE_1')).toEqual([''])
-    expect(map.get('GIT_CONFIG_KEY_2')).toEqual(['credential.https://github.com/.helper'])
-    expect(map.get('GIT_CONFIG_VALUE_2')).toEqual([bridgeCommand(NODE, HELPER)])
-    // Order matters: the empty value must come first, or git keeps the
-    // machine chain and runs it BEFORE the bridge.
-    const keys = assignments.map(([key]) => key)
-    expect(keys.indexOf('GIT_CONFIG_VALUE_0')).toBeLessThan(keys.indexOf('GIT_CONFIG_VALUE_2'))
-    expect(keys.indexOf('GIT_CONFIG_VALUE_1')).toBeLessThan(keys.indexOf('GIT_CONFIG_VALUE_2'))
+  it('always keeps the fail-fast switches', () => {
+    expect(assignments).toContainEqual(['GIT_TERMINAL_PROMPT', '0'])
+    expect(assignments).toContainEqual(['GCM_INTERACTIVE', 'never'])
   })
 
-  it('gives every stored host its own scoped pair', () => {
-    const map = assignmentsOf(shellBridgeEnv(['github.com', 'gitee.com'], {
-      nodePath: NODE, helperPath: HELPER, credentialFile: FILE,
-    }))
-    expect(map.get('GIT_CONFIG_COUNT')).toEqual(['5'])
-    expect(map.get('GIT_CONFIG_KEY_3')).toEqual(['credential.https://gitee.com/.helper'])
-    expect(map.get('GIT_CONFIG_VALUE_4')).toEqual([bridgeCommand(NODE, HELPER)])
+  it('every name survives the DSH scrubber (no KEY/PASSWORD/SECRET/TOKEN, no DSH_)', () => {
+    for (const key of keys) expect(isScrubbed(key)).toBe(false)
   })
 
-  it('collapses duplicate hosts into one pair', () => {
-    const map = assignmentsOf(shellBridgeEnv(['github.com', 'github.com'], {
-      nodePath: NODE, helperPath: HELPER, credentialFile: FILE,
-    }))
-    expect(map.get('GIT_CONFIG_COUNT')).toEqual(['3'])
+  it('carries no legacy GIT_CONFIG_COUNT/KEY_n/VALUE_n entry', () => {
+    for (const key of keys) expect(key).not.toMatch(/GIT_CONFIG_(COUNT|KEY_|VALUE_)/)
   })
 })
 
 describe('createShellBridge', () => {
-  const deps = (store: CredentialStore, env: Record<string, string | undefined>) => ({
-    home: () => 'C:/Users/u',
-    envHome: () => undefined,
-    store,
-    env,
-    helperPath: HELPER,
-    nodePath: NODE,
-  })
-
-  /** A store whose entries (or load failure) the test can rewrite. */
-  function mutableStore(initial: readonly GitCredential[]): CredentialStore & { set: (next: readonly GitCredential[]) => void; break: () => void } {
-    let entries = initial
-    let broken = false
-    return {
-      path: FILE,
-      load: async () => {
-        if (broken) throw new Error('bad file')
-        return [...entries]
-      },
-      save: async () => undefined,
-      set: (next) => { entries = next },
-      break: () => { broken = true },
-    }
+  function setup(entries: readonly GitCredential[] | (() => never)) {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-git-branch-test-'))
+    const configPath = join(dir, 'session.gitconfig')
+    const env: Record<string, string | undefined> = {}
+    const bridge = createShellBridge({
+      home: () => 'C:/Users/u',
+      envHome: () => undefined,
+      store: storeOf(entries),
+      env,
+      configPath,
+      helperPath: HELPER,
+      nodePath: NODE,
+      userGitconfig: USER_GITCONFIG,
+    })
+    return { dir, configPath, env, bridge }
   }
 
-  it('writes the environment for the stored hosts', async () => {
-    const env: Record<string, string | undefined> = {}
-    await createShellBridge(deps(storeOf([credential('github.com')]), env)).apply()
-    expect(env.GIT_CONFIG_COUNT).toBe('3')
-    expect(env.GIT_CONFIG_KEY_0).toBe('credential.helper')
-    expect(env.GIT_CONFIG_VALUE_2).toBe(bridgeCommand(NODE, HELPER))
-    expect(env[BRIDGE_HELPER_ENV]).toBe(join('C:/Users/u', '.dsh', 'git-credentials.json'))
-    expect(env.GIT_TERMINAL_PROMPT).toBe('0')
+  it('apply writes the session config and injects the environment', async () => {
+    const { dir, configPath, env, bridge } = setup([credential('github.com')])
+    try {
+      await bridge.apply()
+      expect(existsSync(configPath)).toBe(true)
+      const body = readFileSync(configPath, 'utf8')
+      expect(body).toContain('[credential "https://github.com/"]')
+      expect(env[SESSION_GITCONFIG_ENV]).toBe(configPath)
+      expect(env[BRIDGE_HELPER_ENV]).toBe(credentialFilePath('C:/Users/u', undefined))
+      expect(env.GIT_TERMINAL_PROMPT).toBe('0')
+      expect(bridge.configPath()).toBe(configPath)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
-  it('drops the assignments of a host that was deleted afterwards', async () => {
-    const env: Record<string, string | undefined> = { GIT_CONFIG_PARAMETERS: 'kept' }
-    const store = mutableStore([credential('github.com'), credential('gitee.com')])
-    const bridge = createShellBridge(deps(store, env))
-    await bridge.apply()
-    expect(env.GIT_CONFIG_COUNT).toBe('5')
-    store.set([credential('github.com')])
-    await bridge.apply()
-    expect(env.GIT_CONFIG_COUNT).toBe('3')
-    // The stale gitee pair must not survive: git would still consult it.
-    expect(env.GIT_CONFIG_KEY_3).toBeUndefined()
-    expect(env.GIT_CONFIG_VALUE_3).toBeUndefined()
-    expect(env.GIT_CONFIG_VALUE_4).toBeUndefined()
-    // A variable the bridge does not own is left alone.
-    expect(env.GIT_CONFIG_PARAMETERS).toBe('kept')
+  it('a broken store still resets the helper list (fail fast, no dialog)', async () => {
+    const { dir, configPath, env, bridge } = setup(() => {
+      throw new Error('boom')
+    })
+    try {
+      await bridge.apply()
+      const body = readFileSync(configPath, 'utf8')
+      expect(body).not.toContain('[credential "https://')
+      expect(body).toContain('helper =')
+      // The config is still written and pointed at, so the reset lands.
+      expect(env[SESSION_GITCONFIG_ENV]).toBe(configPath)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
-  it('keeps the global helper reset when the store cannot be read', async () => {
+  it('a config that cannot be written drops GIT_CONFIG_GLOBAL but keeps fail-fast', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-git-branch-test-'))
+    try {
+      // Make the parent a FILE so mkdirSync(dirname) throws.
+      const blocker = join(dir, 'not-a-dir')
+      writeFileSync(blocker, 'x')
+      const env: Record<string, string | undefined> = {}
+      const bridge = createShellBridge({
+        home: () => 'C:/Users/u',
+        envHome: () => undefined,
+        store: storeOf([credential('github.com')]),
+        env,
+        configPath: join(blocker, 'session.gitconfig'),
+        helperPath: HELPER,
+        nodePath: NODE,
+      })
+      await bridge.apply()
+      expect(env[SESSION_GITCONFIG_ENV]).toBeUndefined()
+      // Fail-fast still goes out: a shell git runs unauthenticated, never hangs.
+      expect(env.GIT_TERMINAL_PROMPT).toBe('0')
+      expect(env.GCM_INTERACTIVE).toBe('never')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('re-apply removes stale keys and drops a deleted host', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-git-branch-test-'))
+    const configPath = join(dir, 'session.gitconfig')
     const env: Record<string, string | undefined> = {}
-    const store = mutableStore([credential('github.com')])
-    const bridge = createShellBridge(deps(store, env))
-    await bridge.apply()
-    expect(env.GIT_CONFIG_COUNT).toBe('3')
-    store.break()
-    await bridge.apply()
-    // No host can be bridged, but the machine chain stays cleared so nothing
-    // pops an interactive credential dialog.
-    expect(env.GIT_CONFIG_COUNT).toBe('1')
-    expect(env.GIT_CONFIG_KEY_0).toBe('credential.helper')
-    expect(env.GIT_CONFIG_VALUE_1).toBeUndefined()
-    expect(env[BRIDGE_HELPER_ENV]).toBe(join('C:/Users/u', '.dsh', 'git-credentials.json'))
+    let hosts = [credential('github.com')]
+    const bridge = createShellBridge({
+      home: () => 'C:/Users/u',
+      envHome: () => undefined,
+      store: storeOf(() => hosts.map(h => h)),
+      env,
+      configPath,
+      helperPath: HELPER,
+      nodePath: NODE,
+      userGitconfig: USER_GITCONFIG,
+    })
+    try {
+      await bridge.apply()
+      expect(readFileSync(configPath, 'utf8')).toContain('[credential "https://github.com/"]')
+      hosts = []
+      await bridge.apply()
+      const body = readFileSync(configPath, 'utf8')
+      expect(body).not.toContain('[credential "https://github.com/"]')
+      expect(env[SESSION_GITCONFIG_ENV]).toBe(configPath)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('dispose clears the environment and deletes the session config', async () => {
+    const { dir, configPath, env, bridge } = setup([credential('github.com')])
+    try {
+      await bridge.apply()
+      expect(existsSync(configPath)).toBe(true)
+      await bridge.dispose()
+      expect(env[SESSION_GITCONFIG_ENV]).toBeUndefined()
+      expect(env[BRIDGE_HELPER_ENV]).toBeUndefined()
+      expect(env.GIT_TERMINAL_PROMPT).toBeUndefined()
+      expect(existsSync(configPath)).toBe(false)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

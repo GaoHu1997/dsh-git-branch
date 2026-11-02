@@ -29,6 +29,7 @@ import {
   type CredentialStore,
   type GitCredential,
 } from './credentials.js'
+import type { CredentialService } from './credential-service.js'
 import { childProcessExec, NETWORK_TIMEOUT_MS, type Exec } from './git.js'
 
 /** Model-facing tool name. */
@@ -120,6 +121,9 @@ export interface GitNetworkToolDeps {
   readonly envHome: () => string | undefined
   /** Store seam; the fs-backed store at the resolved path when absent. */
   readonly store?: CredentialStore
+  /** The single credential entry point (decision 0034); when wired its store
+   * is shared with the routes and the shell bridge. */
+  readonly credentialsService?: CredentialService
   /** Process seam; the real `git` over node:child_process when absent. */
   readonly exec?: Exec
 }
@@ -229,7 +233,7 @@ export function renderGitNetwork(value: GitNetworkValue): string {
  */
 export function gitNetworkTool(deps: GitNetworkToolDeps): GitNetworkTool {
   const storeOf = (): CredentialStore =>
-    deps.store ?? createCredentialStore(credentialFilePath(deps.home(), deps.envHome()))
+    deps.credentialsService?.store ?? deps.store ?? createCredentialStore(credentialFilePath(deps.home(), deps.envHome()))
   const exec = deps.exec ?? childProcessExec
 
   return {
