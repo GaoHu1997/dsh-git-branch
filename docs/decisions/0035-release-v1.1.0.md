@@ -10,7 +10,7 @@
 
 ## 决策
 
-将 `package.json` 的 `version` 从 `1.0.10` 升到 `1.1.0`，作为独立 chore 提交（与该提交一起带上本决策记录）。验证：`pnpm test` 32 文件 608 测试全过（含新增的真实 `git` 端到端回归 `shell-bridge-e2e`）、`typecheck`、`build` 全绿。推送 main 并打 tag `v1.1.0` 后，由 release 工作流（0010）校验 tag 与版本一致后发布 npm 与 GitHub Release。
+将 `package.json` 的 `version` 从 `1.0.10` 升到 `1.1.0`，作为独立 chore 提交（与该提交一起带上本决策记录）。验证：`pnpm test` 32 文件 608 测试全过（含新增的真实 `git` 端到端回归 `shell-bridge-e2e`）、`typecheck`、`build` 全绿。推送 main 并打 tag `v1.1.0` 后，由 release 工作流（0010）校验 tag 与版本一致后发布 npm 与 GitHub Release。随包附带 `CHANGELOG.md` 作为 npm 版本日志（纳入 `package.json` 的 `files`），在 npm 包与 GitHub Release 里说明本次升级内容。
 
 被否决的备选：
 
