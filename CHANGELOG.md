@@ -2,6 +2,23 @@
 
 本文件记录 `dsh-git-branch-manage` 的重要变更。版本号遵循语义化版本。
 
+## [1.2.0] - 2026-11-02
+
+### 新增
+
+- **凭据管理直接读写本机 `~/.git-credentials`**（决策 0037）：面板里存一次，任何 shell、任何子进程的 `git push/fetch/pull` 都用同一账号；文件里不属于本插件的行（注释、`ssh://` 等）原样保留，卸载插件后凭据仍属于用户。
+- **从本机导入凭据，启动时默认执行**（决策 0038）：按用户 gitconfig 里声明过的 credential 域名逐个探测（`git credential fill`，串行 + 20 秒超时），答出令牌即导入面板；面板另有手动「从本机导入」入口（`POST /credentials-import`），toast 汇总导入/跳过/失败数量。`gh`、GCM、`store` 里的账号一次导入即可接管。
+
+### 变更
+
+- 凭据生效通道改用 git 原生机制：`~/.gitconfig` 幂等追加一行 `[include]` 指向生成的 URL 作用域配置（每个已存域名重置 helper 链后装内置 `store`），不再向进程环境注入（废弃 0032/0034 的 `GIT_CONFIG_*` / `GIT_CONFIG_GLOBAL` 通道），令牌也不再进入命令行参数。
+- 未管理域名的机器原有 helper（gh、GCM 等）保持原样，不再被全局清空；未存域名依旧 fail-fast 不弹窗。
+- 令牌明文落在 `~/.git-credentials`（0600）——与 git 自带 `store` helper 一致的安全取舍；面板列表元数据（`method`/`updatedAt`）另存不含 secret 的旁文件。
+
+### 移除
+
+- 删除自研 `git-credential-bridge` helper，改用 git 内置 `credential-store`，不再为每次 git 调用拉起 node 进程。
+
 ## [1.1.0] - 2026-11-02
 
 ### 修复

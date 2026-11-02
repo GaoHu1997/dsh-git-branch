@@ -55,3 +55,4 @@
 - [0036 — shell 凭据桥启动时清掉 0032 遗留的 `GIT_CONFIG_COUNT` 环境通道](0036-shell-bridge-drops-legacy-config-env.md)
 - [0037 — 凭据直接管理本机 ~/.git-credentials，经 ~/.gitconfig 的 URL 作用域 include 生效](0037-local-git-credentials-backend.md)（取代 0021 的存储位置与 0034 的环境注入通道）
 - [0038 — 从本机凭据导入并在启动时默认接管](0038-import-machine-credentials.md)
+- [0039 — 发布 v1.2.0 次版本](0039-release-v1.2.0.md)
