@@ -5,10 +5,12 @@ import { join } from 'node:path'
 import { credentialFilePath, type CredentialStore, type GitCredential } from '../src/credentials.ts'
 import {
   BRIDGE_HELPER_ENV,
+  LEGACY_COUNT_ENV,
   SESSION_GITCONFIG_ENV,
   bridgeCommand,
   createShellBridge,
   gitconfigEscape,
+  legacyConfigNames,
   sessionGitconfigBody,
   shellQuote,
   shellBridgeEnv,
@@ -144,6 +146,41 @@ describe('shellBridgeEnv', () => {
   })
 })
 
+describe('legacyConfigNames', () => {
+  it('reports nothing when the retired channel is absent', () => {
+    expect(legacyConfigNames({})).toEqual([])
+  })
+
+  it('reports a half-injected channel: count and values survive, KEYs are scrubbed', () => {
+    const env = {
+      [LEGACY_COUNT_ENV]: '2',
+      GIT_CONFIG_VALUE_0: '',
+      GIT_CONFIG_VALUE_1: '!node "bridge.js"',
+      PATH: '/usr/bin',
+    }
+    expect([...legacyConfigNames(env)].sort()).toEqual([
+      'GIT_CONFIG_COUNT',
+      'GIT_CONFIG_VALUE_0',
+      'GIT_CONFIG_VALUE_1',
+    ])
+  })
+
+  it('reports the surviving KEY name of an incomplete pair', () => {
+    const env = { [LEGACY_COUNT_ENV]: '2', GIT_CONFIG_KEY_0: 'credential.helper', GIT_CONFIG_VALUE_0: '' }
+    expect(legacyConfigNames(env)).toContain('GIT_CONFIG_KEY_0')
+  })
+
+  it('leaves a complete caller-set channel alone — that is valid git input', () => {
+    const env = { [LEGACY_COUNT_ENV]: '1', GIT_CONFIG_KEY_0: 'core.pager', GIT_CONFIG_VALUE_0: 'cat' }
+    expect(legacyConfigNames(env)).toEqual([])
+  })
+
+  it('treats a non-numeric count as broken', () => {
+    const env = { [LEGACY_COUNT_ENV]: 'many', GIT_CONFIG_VALUE_0: 'x' }
+    expect(legacyConfigNames(env)).toContain('GIT_CONFIG_VALUE_0')
+  })
+})
+
 describe('createShellBridge', () => {
   function setup(entries: readonly GitCredential[] | (() => never)) {
     const dir = mkdtempSync(join(tmpdir(), 'dsh-git-branch-test-'))
@@ -243,6 +280,53 @@ describe('createShellBridge', () => {
       const body = readFileSync(configPath, 'utf8')
       expect(body).not.toContain('[credential "https://github.com/"]')
       expect(env[SESSION_GITCONFIG_ENV]).toBe(configPath)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('apply deletes the retired 0032 channel left in the host environment', async () => {
+    const { dir, configPath, env, bridge } = setup([credential('github.com')])
+    env[LEGACY_COUNT_ENV] = '2'
+    env.GIT_CONFIG_VALUE_0 = ''
+    env.GIT_CONFIG_VALUE_1 = '!node "bridge.js"'
+    env.PATH = '/usr/bin'
+    try {
+      await bridge.apply()
+      expect(env[LEGACY_COUNT_ENV]).toBeUndefined()
+      expect(env.GIT_CONFIG_VALUE_0).toBeUndefined()
+      expect(env.GIT_CONFIG_VALUE_1).toBeUndefined()
+      // Only the channel goes: unrelated variables survive.
+      expect(env.PATH).toBe('/usr/bin')
+      expect(env[SESSION_GITCONFIG_ENV]).toBe(configPath)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('apply deletes the leftovers even when the session config cannot be written', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-git-branch-test-'))
+    try {
+      const blocker = join(dir, 'not-a-dir')
+      writeFileSync(blocker, 'x')
+      const env: Record<string, string | undefined> = {
+        [LEGACY_COUNT_ENV]: '1',
+        GIT_CONFIG_VALUE_0: '!node "bridge.js"',
+      }
+      const bridge = createShellBridge({
+        home: () => 'C:/Users/u',
+        envHome: () => undefined,
+        store: storeOf([credential('github.com')]),
+        env,
+        configPath: join(blocker, 'session.gitconfig'),
+        helperPath: HELPER,
+        nodePath: NODE,
+      })
+      await bridge.apply()
+      // A broken legacy channel breaks git on its own, write failure or not.
+      expect(env[LEGACY_COUNT_ENV]).toBeUndefined()
+      expect(env.GIT_CONFIG_VALUE_0).toBeUndefined()
+      expect(env.GIT_TERMINAL_PROMPT).toBe('0')
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

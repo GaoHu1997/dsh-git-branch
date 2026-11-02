@@ -38,6 +38,12 @@
  *  - `DGB_BRIDGE_HELPER` — credential file path for the helper script.
  *  - `GIT_TERMINAL_PROMPT` / `GCM_INTERACTIVE` — fail fast, never prompt.
  *
+ * `apply`/`dispose` also delete the retired 0032 channel's leftovers
+ * (`GIT_CONFIG_COUNT` with its `GIT_CONFIG_KEY_n` / `GIT_CONFIG_VALUE_n`
+ * pairs). The scrubber strips the KEY names while the count and values
+ * survive, so a half-injected channel — left behind by an upgrade from
+ * 1.0.10 — makes git abort every command; see `legacyConfigNames` (0036).
+ *
  * The file is re-derived whenever the credential store changes
  * (`src/routes.ts` calls the bridge after every save / delete / sign-in).
  */
@@ -199,6 +205,40 @@ export function shellBridgeEnv(options: {
   ]
 }
 
+/** The retired 0032 channel's count variable. */
+export const LEGACY_COUNT_ENV = 'GIT_CONFIG_COUNT'
+
+/** Names of the retired 0032 channel's per-entry pairs. */
+const LEGACY_KEY_NAME = /^GIT_CONFIG_KEY_\d+$/
+const LEGACY_VALUE_NAME = /^GIT_CONFIG_VALUE_\d+$/
+
+/**
+ * Environment names left over from the retired 0032 channel that would make
+ * git abort with `fatal: unable to parse command-line config`.
+ *
+ * The DSH subprocess scrubber deletes every `GIT_CONFIG_KEY_<n>` (the name
+ * contains `KEY`) while `GIT_CONFIG_COUNT` / `GIT_CONFIG_VALUE_<n>` survive, so
+ * the channel is injected half-way and git can no longer parse it. Those
+ * leftovers outlive the code that wrote them: upgrading the plugin from 1.0.10
+ * leaves them in the host process environment, where they break every `git`
+ * command in every derived shell until someone deletes them by hand.
+ *
+ * A count whose pairs are all present is valid git input (a caller may set the
+ * channel deliberately), so it is left untouched; only a broken channel — or a
+ * non-numeric count — is reported for removal.
+ * @param env - the environment to inspect.
+ */
+export function legacyConfigNames(env: Record<string, string | undefined>): string[] {
+  if (env[LEGACY_COUNT_ENV] === undefined) return []
+  const count = Number(env[LEGACY_COUNT_ENV])
+  const paired = Number.isInteger(count) && count >= 0
+    && Array.from({ length: count }, (_, index) => `GIT_CONFIG_KEY_${index}`)
+      .every(name => env[name] !== undefined)
+  if (paired) return []
+  return Object.keys(env).filter(name =>
+    name === LEGACY_COUNT_ENV || LEGACY_KEY_NAME.test(name) || LEGACY_VALUE_NAME.test(name))
+}
+
 /**
  * Build the bridge over one host process. Every {@link ShellBridge.apply}
  * rewrites the session config for the current store and re-points the
@@ -214,6 +254,14 @@ export function createShellBridge(deps: ShellBridgeDeps): ShellBridge {
     ?? join((deps.configDir ?? tmpdir)(), `dsh-git-branch-${String(process.pid)}.gitconfig`)
   let applied: string[] = []
   const credentialFile = (): string => credentialFilePath(deps.home(), deps.envHome())
+
+  /** Delete the retired 0032 channel's leftovers before git can see them. */
+  const dropLegacy = (): void => {
+    for (const key of legacyConfigNames(env)) {
+      delete env[key]
+      applied.push(key)
+    }
+  }
 
   /** Write the session config atomically with owner-only permissions. */
   const writeConfig = (body: string): void => {
@@ -262,6 +310,7 @@ export function createShellBridge(deps: ShellBridgeDeps): ShellBridge {
         // let the machine chain pop a dialog); only the fail-fast switches
         // remain, so a shell git runs unauthenticated but never hangs.
       }
+      dropLegacy()
       for (const key of applied) delete env[key]
       applied = []
       for (const [key, value] of assignments) {
@@ -270,6 +319,7 @@ export function createShellBridge(deps: ShellBridgeDeps): ShellBridge {
       }
     },
     async dispose(): Promise<void> {
+      dropLegacy()
       for (const key of applied) delete env[key]
       applied = []
       try {

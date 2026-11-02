@@ -52,3 +52,4 @@
 - [0033 — 发布 v1.0.10 补丁版本](0033-release-v1.0.10.md)
 - [0034 — shell 凭据桥改用 GIT_CONFIG_GLOBAL 会话配置，凭据入口收敛为服务](0034-shell-gitconfig-channel-and-credential-service.md)
 - [0035 — 发布 v1.1.0 次版本](0035-release-v1.1.0.md)
+- [0036 — shell 凭据桥启动时清掉 0032 遗留的 `GIT_CONFIG_COUNT` 环境通道](0036-shell-bridge-drops-legacy-config-env.md)
