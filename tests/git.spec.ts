@@ -973,3 +973,85 @@ describe('appendWorktreeExclude', () => {
     await expect(appendWorktreeExclude(seams, '/repo')).resolves.toContain('EACCES')
   })
 })
+
+describe('network channel fallback', () => {
+  const PIN = ['-c', 'http.curloptResolve=github.com:443:140.82.114.3']
+
+  it('moves a write to the fallback channel only when the direct probe hit a reachability failure', async () => {
+    const exec = scripted([
+      { args: ['rev-parse', '@{u}'], out: { stdout: 'abc\n' } },
+      { args: ['branch', '--show-current'], out: { stdout: 'main\n' } },
+      { args: ['rev-parse', 'HEAD'], out: { stdout: 'abc\n' } },
+      { args: ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], out: { stdout: 'origin/main\n' } },
+      { args: ['remote', 'get-url', '--push', 'origin'], out: { stdout: 'https://github.com/o/r.git\n' } },
+      { args: ['ls-remote', '--heads', 'https://github.com/o/r.git'], out: { code: 128, stderr: 'fatal: unable to access: Recv failure: Connection was reset\n' } },
+      { args: PIN, out: { stdout: '' } },
+      { args: [...PIN, 'push'], out: { stdout: '' } },
+      { args: ['rev-parse', '@{u}'], out: { stdout: 'def\n' } },
+    ])
+    const asked: string[] = []
+    const outcome = await pushBranch(exec, '/repo', [], {
+      fallbackChannel: async endpoint => {
+        asked.push(endpoint)
+        return PIN
+      },
+    })
+    expect(asked).toEqual(['https://github.com/o/r.git'])
+    expect(outcome).toEqual({ branch: 'main', pushed: true })
+  })
+
+  it('never asks for another channel when the failure is about state, not reachability', async () => {
+    // A missing credential is not fixed by a different IP; asking would only
+    // replace a precise message with a second identical one.
+    const exec = scripted([
+      { args: ['rev-parse', '@{u}'], out: { stdout: 'abc\n' } },
+      { args: ['branch', '--show-current'], out: { stdout: 'main\n' } },
+      { args: ['rev-parse', 'HEAD'], out: { stdout: 'abc\n' } },
+      { args: ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], out: { stdout: 'origin/main\n' } },
+      { args: ['remote', 'get-url', '--push', 'origin'], out: { stdout: 'https://github.com/o/r.git\n' } },
+      { args: ['ls-remote', '--heads', 'https://github.com/o/r.git'], out: { code: 128, stderr: "fatal: could not read Username for 'https://github.com': terminal prompts disabled\n" } },
+    ])
+    const asked: string[] = []
+    await expect(pushBranch(exec, '/repo', [], {
+      fallbackChannel: async endpoint => {
+        asked.push(endpoint)
+        return PIN
+      },
+    })).rejects.toThrow('terminal prompts disabled')
+    expect(asked).toEqual([])
+  })
+
+  it('keeps the direct error when the fallback cannot reach the endpoint either', async () => {
+    const exec = scripted([
+      { args: ['rev-parse', '@{u}'], out: { stdout: 'abc\n' } },
+      { args: ['branch', '--show-current'], out: { stdout: 'main\n' } },
+      { args: ['rev-parse', 'HEAD'], out: { stdout: 'abc\n' } },
+      { args: ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], out: { stdout: 'origin/main\n' } },
+      { args: ['remote', 'get-url', '--push', 'origin'], out: { stdout: 'https://github.com/o/r.git\n' } },
+      { args: ['ls-remote', '--heads', 'https://github.com/o/r.git'], out: { code: 128, stderr: 'Connection was reset\n' } },
+      { args: PIN, out: { code: 128, stderr: 'Failed to connect\n' } },
+    ])
+    await expect(pushBranch(exec, '/repo', [], { fallbackChannel: async () => PIN }))
+      .rejects.toThrow('Failed to connect')
+  })
+
+  it('retries a failed fetch once on the fallback channel and nowhere else', async () => {
+    // Reading is idempotent; the retry cannot duplicate anything, and the
+    // second attempt still has to go through the same '-c' argv.
+    const exec = scripted([
+      { args: ['fetch', '--all', '--prune'], out: { code: 128, stderr: 'fatal: unable to access: Recv failure: Connection was reset\n' } },
+      { args: ['remote'], out: { stdout: 'origin\n' } },
+      { args: ['remote', 'get-url', 'origin'], out: { stdout: 'https://github.com/o/r.git\n' } },
+      { args: [...PIN, 'fetch', '--all', '--prune'], out: { stdout: '' } },
+    ])
+    await fetchAll(exec, '/repo', undefined, [], { fallbackChannel: async () => PIN })
+  })
+
+  it('does not retry a fetch that failed for a reason a channel cannot fix', async () => {
+    const exec = scripted([
+      { args: ['fetch', '--all', '--prune'], out: { code: 128, stderr: "fatal: could not read Username for 'https://github.com': terminal prompts disabled\n" } },
+    ])
+    await expect(fetchAll(exec, '/repo', undefined, [], { fallbackChannel: async () => PIN }))
+      .rejects.toThrow('terminal prompts disabled')
+  })
+})

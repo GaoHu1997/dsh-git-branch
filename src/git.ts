@@ -8,7 +8,7 @@ import { execFile } from 'node:child_process'
 import { existsSync, readdirSync } from 'node:fs'
 import { appendFile, mkdir, readFile, rm } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, normalize, resolve } from 'node:path'
-import { FETCH_TIMEOUT_MS, PROBE_TIMEOUT_MS, PUSH_TIMEOUT_MS, VERIFY_TIMEOUT_MS } from './network.js'
+import { classifyGitFailure, FETCH_TIMEOUT_MS, PROBE_TIMEOUT_MS, PUSH_TIMEOUT_MS, VERIFY_TIMEOUT_MS } from './network.js'
 import { accelerateUrlError, localBranchName, normalizeAccelerateUrl } from './normalize.js'
 import type { BranchEntry, RemoteEntry, WorktreeEntry, WorkspaceGitFacts } from './wire.js'
 
@@ -613,8 +613,25 @@ export function accelArgs(prefix: string | undefined): readonly string[] {
  * @param authArgs - optional per-host credential `-c` pairs (see
  * `credentials.ts`); prepended before the subcommand like the accel rewrite.
  */
-export async function fetchAll(exec: Exec, repoRoot: string, accelPrefix?: string, authArgs: readonly string[] = []): Promise<void> {
-  await git(exec, repoRoot, [...accelArgs(accelPrefix), ...authArgs, 'fetch', '--all', '--prune'], FETCH_TIMEOUT_MS)
+export async function fetchAll(exec: Exec, repoRoot: string, accelPrefix?: string, authArgs: readonly string[] = [], options: NetworkOptions = {}): Promise<void> {
+  const base = [...accelArgs(accelPrefix), ...authArgs]
+  try {
+    await git(exec, repoRoot, [...base, 'fetch', '--all', '--prune'], FETCH_TIMEOUT_MS)
+  } catch (error) {
+    // Reading is idempotent, so a retry on another channel cannot duplicate
+    // anything. The first remote's URL stands for the fetch: with one remote
+    // (the normal case) it IS the fetch.
+    const failure = error instanceof GitError ? classifyGitFailure(error.stderr, { timedOut: error.timedOut }) : undefined
+    if (failure === undefined || !failure.retryable || options.fallbackChannel === undefined) throw error
+    const names = (await gitMaybe(exec, repoRoot, ['remote']))?.split('\n').map(item => item.trim()).filter(item => item !== '') ?? []
+    const first = names[0]
+    if (first === undefined) throw error
+    const endpoint = (await gitMaybe(exec, repoRoot, ['remote', 'get-url', first]))?.trim() ?? ''
+    if (endpoint === '') throw error
+    const channel = await options.fallbackChannel(endpoint)
+    if (channel === undefined) throw error
+    await git(exec, repoRoot, [...channel, ...base, 'fetch', '--all', '--prune'], FETCH_TIMEOUT_MS)
+  }
 }
 
 /** Outcome of {@link updateBranch}: the branch touched and whether it moved. */
@@ -672,6 +689,43 @@ export interface NetworkOptions {
   /** Argv placed before the subcommand that selects a network channel;
    * empty/absent = the direct connection. */
   channelArgs?: readonly string[]
+  /**
+   * Consulted ONLY after the direct channel's probe failed in a way another
+   * channel could plausibly fix (unreachable/reset/timeout). Answers argv for
+   * a replacement channel — a pinned edge IP, a proxy — which is probed
+   * again before it is used. Undefined = there is no other channel.
+   */
+  fallbackChannel?: (endpoint: string) => Promise<readonly string[] | undefined>
+}
+
+/**
+ * Pick the channel a write will use: the direct one when its probe answers,
+ * otherwise the fallback channel when the failure is retryable and the
+ * caller supplied one. The fallback is probed too — a fallback that cannot
+ * reach the endpoint must not replace a clear direct error with a vague one.
+ * @param exec - executor seam.
+ * @param cwd - any directory inside the repository.
+ * @param target - resolved endpoint of the write.
+ * @param options - caller's channels.
+ * @param authArgs - per-host credential argv.
+ * @returns the argv to prepend to the push and its verification read.
+ */
+async function chooseChannel(exec: Exec, cwd: string, target: PushTarget, options: NetworkOptions, authArgs: readonly string[]): Promise<readonly string[]> {
+  const direct = options.channelArgs ?? []
+  if (target.url === undefined) return direct
+  try {
+    await probePushTarget(exec, cwd, target, { channelArgs: direct }, authArgs)
+    return direct
+  } catch (error) {
+    // A credential or divergence failure is about state, not reachability:
+    // pinning an IP would just fail again with the same message.
+    const failure = error instanceof GitError ? classifyGitFailure(error.stderr, { timedOut: error.timedOut }) : undefined
+    if (failure === undefined || !failure.retryable || options.fallbackChannel === undefined) throw error
+    const fallback = await options.fallbackChannel(target.url)
+    if (fallback === undefined) throw error
+    await probePushTarget(exec, cwd, target, { channelArgs: fallback }, authArgs)
+    return fallback
+  }
 }
 
 /**
@@ -755,15 +809,15 @@ export async function pushBranch(exec: Exec, cwd: string, authArgs: readonly str
   const branch = (await gitMaybe(exec, cwd, ['branch', '--show-current']))?.trim() ?? ''
   const head = (await git(exec, cwd, ['rev-parse', 'HEAD'])).trim()
   const target = await resolvePushTarget(exec, cwd, authArgs)
-  if (target !== undefined) await probePushTarget(exec, cwd, target, options, authArgs)
+  const channel = target === undefined ? (options.channelArgs ?? []) : await chooseChannel(exec, cwd, target, options, authArgs)
   try {
-    await git(exec, cwd, [...(options.channelArgs ?? []), ...authArgs, 'push'], PUSH_TIMEOUT_MS)
+    await git(exec, cwd, [...channel, ...authArgs, 'push'], PUSH_TIMEOUT_MS)
   } catch (error) {
     // A killed push carries no verdict: the remote may have applied it before
     // the socket died. One `ls-remote` settles it; anything else (a genuine
     // refusal, a rejected pack) is reported as-is and never retried.
     if (error instanceof GitError && error.timedOut && target !== undefined && branch !== '') {
-      const landed = await remoteRefOf(exec, cwd, target, `refs/heads/${branch}`, options, authArgs)
+      const landed = await remoteRefOf(exec, cwd, target, `refs/heads/${branch}`, { channelArgs: channel }, authArgs)
       if (landed === head) return { branch, pushed: true, note: 'timed-out-but-landed' }
     }
     throw error
@@ -846,13 +900,22 @@ export async function pushTag(exec: Exec, cwd: string, name: string, remote: str
   const local = (await git(exec, cwd, ['rev-parse', '--verify', ref])).trim()
   // The existence check doubles as the reachability probe and as the
   // verification a timed-out push needs: the same read decides all three.
-  const already = await remoteRefOf(exec, cwd, { remote }, ref, options, authArgs)
+  // Same channel policy as a branch push, but only when a fallback exists:
+  // without one a tag needs no extra probe (and no extra remote lookup).
+  let target: PushTarget = { remote }
+  let channel = options.channelArgs ?? []
+  if (options.fallbackChannel !== undefined) {
+    const url = (await gitMaybe(exec, cwd, ['remote', 'get-url', '--push', remote]))?.trim() ?? ''
+    target = url === '' ? { remote } : { remote, url }
+    channel = await chooseChannel(exec, cwd, target, options, authArgs)
+  }
+  const already = await remoteRefOf(exec, cwd, target, ref, { channelArgs: channel }, authArgs)
   if (already === local) return { tag: name, remote, pushed: false }
   try {
-    await git(exec, cwd, [...(options.channelArgs ?? []), ...authArgs, 'push', remote, `${ref}:${ref}`], PUSH_TIMEOUT_MS)
+    await git(exec, cwd, [...channel, ...authArgs, 'push', remote, `${ref}:${ref}`], PUSH_TIMEOUT_MS)
   } catch (error) {
     if (error instanceof GitError && error.timedOut) {
-      const landed = await remoteRefOf(exec, cwd, { remote }, ref, options, authArgs)
+      const landed = await remoteRefOf(exec, cwd, target, ref, { channelArgs: channel }, authArgs)
       if (landed === local) return { tag: name, remote, pushed: true, note: 'timed-out-but-landed' }
     }
     throw error

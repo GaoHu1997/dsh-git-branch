@@ -15,6 +15,7 @@ import type {} from '@deepseek-ai/dsh-host-webserver'
 // Type-only: pulls the settings Context declaration merge (`ctx.settings`).
 import type {} from '@deepseek-ai/dsh-settings'
 import { childProcessExec } from './git.js'
+import { pinnedChannelFor, pinnedProbe } from './network-ip.js'
 import { ACCEL_DEFAULT_URL, accelerateUrlError } from './normalize.js'
 import {
   handleCredentials, handleCredentialsDelete, handleCredentialsImport, handleCredentialsOAuthPoll, handleCredentialsOAuthStart, handleCredentialsSave, handleRemote, handleRemotes, handleAiCommitMessage, handleChanges, handleCommit, handleCommitFiles, handleCreateBranch, handleCreateTag, handleCreateWorktree, handleDeleteBranch, handleEnsureDirectory, handleFetch, handleGroupWorktrees, handleInspectWorktree, handleLog, handlePathExists, handlePurgeDirectory, handlePushTag, handleRemoveWorktree, handleRenameBranch, handleStage, handleStatus, handleSwitch, handleUpdate, handlePush, handleWorktreesAll,
@@ -231,6 +232,7 @@ export function apply(ctx: Context, config: Config = {}): void {
 
   const deps = (): RouteDeps => ({
     exec: childProcessExec,
+    networkChannel: (exec, cwd, authArgs) => endpoint => pinnedChannelFor({ endpoint, probe: pinnedProbe(exec, cwd, endpoint, authArgs) }),
     sectionRootDir: () => readVolatile(currentConfig().rootDir),
     sectionFetchBeforeCreate: () => readVolatile(currentConfig().fetchBeforeCreate),
     sectionPostCreateCopyFiles: () => readVolatile(currentConfig().postCreateCopyFiles),

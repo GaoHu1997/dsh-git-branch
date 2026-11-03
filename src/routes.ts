@@ -22,6 +22,9 @@ import type {
 /** Everything the handlers need from the host half. */
 export interface RouteDeps {
   exec: Exec
+  /** Channel provider for the IP-optimized fallback (absent = direct only;
+   * tests leave it out so no real lookup or race ever runs). */
+  networkChannel?: (exec: Exec, cwd: string, authArgs: readonly string[]) => (endpoint: string) => Promise<readonly string[] | undefined>
   /** The settings-resolved rootDir (absent/blank = the default location). */
   sectionRootDir: () => string | undefined
   /** Whether a worktree creation syncs the remotes first (absent = off). */
@@ -527,7 +530,11 @@ export async function handleCreateWorktree(deps: RouteDeps, body: unknown): Prom
       const resolved = await resolveBranch(deps.exec, facts.repoRoot, branch)
       if (resolved?.remote !== undefined) {
         try {
-          await fetchAll(deps.exec, facts.repoRoot, accelPrefix(deps), await authArgsFor(deps))
+          {
+        const authArgs = await authArgsFor(deps)
+        const fallback = deps.networkChannel?.(deps.exec, facts.repoRoot, authArgs)
+        await fetchAll(deps.exec, facts.repoRoot, accelPrefix(deps), authArgs, fallback === undefined ? {} : { fallbackChannel: fallback })
+      }
         } catch (error) {
           fetchWarning = error instanceof GitError ? error.stderr.trim() : error instanceof Error ? error.message : String(error)
         }
@@ -732,7 +739,11 @@ export async function handleFetch(deps: RouteDeps, body: unknown): Promise<Route
   try {
     const facts = await probeRepo(deps.exec, repoPath, deps.dirExists)
     if (facts === undefined) return fail(400, `"${repoPath}" is not inside a git repository`)
-    await fetchAll(deps.exec, facts.repoRoot, accelPrefix(deps), await authArgsFor(deps))
+    {
+      const authArgs = await authArgsFor(deps)
+      const fallback = deps.networkChannel?.(deps.exec, facts.repoRoot, authArgs)
+      await fetchAll(deps.exec, facts.repoRoot, accelPrefix(deps), authArgs, fallback === undefined ? {} : { fallbackChannel: fallback })
+    }
     const result: FetchResult = { remote: 'all' }
     return { status: 200, body: result }
   } catch (error) {
@@ -787,7 +798,9 @@ export async function handlePush(deps: RouteDeps, body: unknown): Promise<RouteO
     if (facts === undefined) return fail(400, `"${repoPath}" is not inside a git repository`)
     // The session's OWN worktree, not the main checkout: in a linked-worktree
     // session "push current branch" means the branch that worktree holds.
-    const outcome = await pushBranch(deps.exec, facts.toplevel, await authArgsFor(deps))
+    const authArgs = await authArgsFor(deps)
+    const fallback = deps.networkChannel?.(deps.exec, facts.toplevel, authArgs)
+    const outcome = await pushBranch(deps.exec, facts.toplevel, authArgs, fallback === undefined ? {} : { fallbackChannel: fallback })
     const result: PushResult = { branch: outcome.branch, pushed: outcome.pushed, ...(outcome.note === undefined ? {} : { note: outcome.note }) }
     return { status: 200, body: result }
   } catch (error) {
@@ -1176,7 +1189,9 @@ export async function handlePushTag(deps: RouteDeps, body: unknown): Promise<Rou
     if (!tags.includes(name)) return fail(400, `"${name}" is not a local tag`)
     const choice = await resolvePushRemote(deps.exec, facts.toplevel)
     if (!choice.ok) return fail(400, choice.message)
-    const result = await pushTag(deps.exec, facts.toplevel, name, choice.remote, await authArgsFor(deps))
+    const authArgs = await authArgsFor(deps)
+    const fallback = deps.networkChannel?.(deps.exec, facts.toplevel, authArgs)
+    const result = await pushTag(deps.exec, facts.toplevel, name, choice.remote, authArgs, fallback === undefined ? {} : { fallbackChannel: fallback })
     const body: PushTagResult = { ...result, ...(result.note === undefined ? {} : { note: result.note }) }
     return { status: 200, body }
   } catch (error) {
