@@ -43,6 +43,28 @@ export class GitError extends Error {
   }
 }
 
+/** Appended to reachability errors on an SSH remote: the HTTP channels
+ * (mirror prefix, DNS pin, http proxy) cannot carry an SSH transport, so the
+ * user has to change the endpoint itself. */
+const SSH_REMOTE_HINT = 'SSH remote: 代理与 IP 优选只作用于 https 远端；网络到 github.com:22 不通时可把远端改成 https://github.com/<owner>/<repo>.git。'
+
+/**
+ * Whether an endpoint speaks the SSH transport (`ssh://…`, `git@host:…`, or
+ * any `user@host:path` scp-style URL) — none of the network channels apply.
+ * @param url - a remote URL as git printed it, or undefined.
+ */
+export function isSshEndpoint(url: string | undefined): boolean {
+  if (url === undefined) return false
+  const text = url.trim()
+  return text.startsWith('ssh://') || /^[^\s/]+@[^\s/]+:/.test(text)
+}
+
+/** Re-throw a failure with the SSH hint appended once. */
+function withSshHint(error: unknown): unknown {
+  if (!(error instanceof GitError) || error.stderr.includes(SSH_REMOTE_HINT)) return error
+  return new GitError(error.args, error.code, `${error.stderr.trimEnd()}\n\n${SSH_REMOTE_HINT}`, error.timedOut)
+}
+
 /** Facts the status route assembles: branches, worktrees, repo identity. */
 export interface RepoFacts {
   /** Absolute main worktree path (`dirname` of `--git-common-dir`, not the
@@ -614,10 +636,23 @@ export function accelArgs(prefix: string | undefined): readonly string[] {
  * `credentials.ts`); prepended before the subcommand like the accel rewrite.
  */
 export async function fetchAll(exec: Exec, repoRoot: string, accelPrefix?: string, authArgs: readonly string[] = [], options: NetworkOptions = {}): Promise<void> {
-  const base = [...accelArgs(accelPrefix), ...authArgs]
+  const accel = accelArgs(accelPrefix)
+  const base = [...accel, ...authArgs]
   try {
     await git(exec, repoRoot, [...base, 'fetch', '--all', '--prune'], FETCH_TIMEOUT_MS)
-  } catch (error) {
+  } catch (firstError) {
+    let error = firstError
+    // The mirror is only an accelerator, never an authority: a private repo
+    // answers 401 there, a bad day answers 5xx, and neither should hide the
+    // direct URL. Reads are idempotent, so one direct retry costs nothing.
+    if (accel.length > 0) {
+      try {
+        await git(exec, repoRoot, [...authArgs, 'fetch', '--all', '--prune'], FETCH_TIMEOUT_MS)
+        return
+      } catch (directError) {
+        error = directError
+      }
+    }
     // Reading is idempotent, so a retry on another channel cannot duplicate
     // anything. The first remote's URL stands for the fetch: with one remote
     // (the normal case) it IS the fetch.
@@ -628,10 +663,14 @@ export async function fetchAll(exec: Exec, repoRoot: string, accelPrefix?: strin
     if (first === undefined) throw error
     const endpoint = (await gitMaybe(exec, repoRoot, ['remote', 'get-url', first]))?.trim() ?? ''
     if (endpoint === '') throw error
+    // An SSH remote has no HTTP channel to switch to; the hint is the only
+    // actionable answer (and saves three probes that can never succeed).
+    if (isSshEndpoint(endpoint)) throw withSshHint(error)
     // The probe IS the retry here: reading is idempotent, so a successful
-    // channel probe has already performed the work.
+    // channel probe has already performed the work. A channel pins the real
+    // host, so the mirror rewrite is dropped with it.
     await firstWorkingChannel(endpoint, options, async channel => {
-      await git(exec, repoRoot, [...channel, ...base, 'fetch', '--all', '--prune'], FETCH_TIMEOUT_MS)
+      await git(exec, repoRoot, [...channel, ...authArgs, 'fetch', '--all', '--prune'], FETCH_TIMEOUT_MS)
     })
       .catch(() => { throw error })
   }
@@ -747,7 +786,10 @@ async function chooseChannel(exec: Exec, cwd: string, target: PushTarget, option
     return direct
   } catch (error) {
     // A credential or divergence failure is about state, not reachability:
-    // pinning an IP would just fail again with the same message.
+    // pinning an IP would just fail again with the same message. An SSH remote
+    // cannot use any HTTP channel at all — say so instead of probing three
+    // times into the same wall.
+    if (isSshEndpoint(target.url)) throw withSshHint(error)
     const failure = error instanceof GitError ? classifyGitFailure(error.stderr, { timedOut: error.timedOut }) : undefined
     if (failure === undefined || !failure.retryable) throw error
     const fallback = await firstWorkingChannel(target.url, options, async args => {
