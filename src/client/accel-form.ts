@@ -15,12 +15,14 @@
  */
 
 import type { ConfigForm } from '@deepseek-ai/dsh-client-ui-settings/client'
-import { ACCEL_DEFAULT_URL, accelerateUrlError, normalizeAccelerateUrl, type AccelerateUrlIssue } from '../normalize.ts'
+import { ACCEL_DEFAULT_URL, accelerateUrlError, normalizeAccelerateUrl, proxyUrlError, type AccelerateUrlIssue } from '../normalize.ts'
 import type { SectionValue } from './card-form.ts'
 
 /** The fields this form edits. */
 export const ACCEL_ENABLED_FIELD = 'cnAccelerate'
 export const ACCEL_URL_FIELD = 'cnAccelerateUrl'
+/** The proxy channel's config key (0043); blank = no proxy channel. */
+export const NETWORK_PROXY_FIELD = 'networkProxy'
 
 /**
  * Minimal observable snapshot source, the same stable-reference discipline
@@ -53,6 +55,10 @@ export interface AccelState {
   failed: boolean
   /** Why the URL text (draft or effective) is not usable yet; null = fine. */
   urlError: AccelerateUrlIssue | null
+  /** The proxy URL as TEXT (effective value or live draft); blank = no proxy. */
+  proxyText: string
+  /** Why the proxy text is not usable yet; null = fine (blank included). */
+  proxyError: string | null
 }
 
 /**
@@ -64,6 +70,8 @@ export interface AccelActions {
   setAccelEnabled: (value: boolean) => void
   /** Stage draft text for the accelerate URL (validated on save). */
   editAccelUrl: (text: string) => void
+  /** Stage draft text for the proxy URL (validated on save; blank = none). */
+  editNetworkProxy: (text: string) => void
   /** Fill the URL draft with the shipped default (a stage, not a write). */
   restoreAccelDefault: () => void
   /** Write the switch AND the normalized URL together, then re-seed.
@@ -91,6 +99,7 @@ export class AccelForm {
   private readonly listeners = new Set<() => void>()
   private enabledDraft: boolean | undefined
   private urlDraft: string | undefined
+  private proxyDraft: string | undefined
   private saving = false
   private failed = false
 
@@ -127,6 +136,11 @@ export class AccelForm {
         this.failed = false
         this.publish()
       },
+      editNetworkProxy: (text) => {
+        this.proxyDraft = text
+        this.failed = false
+        this.publish()
+      },
       restoreAccelDefault: () => {
         this.urlDraft = ACCEL_DEFAULT_URL
         this.failed = false
@@ -136,9 +150,10 @@ export class AccelForm {
       // toast-on-settle, tests — can await it.
       saveAccel: () => this.save(),
       discardAccel: () => {
-        if (this.enabledDraft === undefined && this.urlDraft === undefined && !this.failed) return
+        if (this.enabledDraft === undefined && this.urlDraft === undefined && this.proxyDraft === undefined && !this.failed) return
         this.enabledDraft = undefined
         this.urlDraft = undefined
+        this.proxyDraft = undefined
         this.failed = false
         this.publish()
       },
@@ -152,6 +167,12 @@ export class AccelForm {
     return this.urlDraft ?? (value ?? ACCEL_DEFAULT_URL)
   }
 
+  /** The proxy as the user sees it: the live draft, else the stored value. */
+  private effectiveProxyText(): string {
+    const value = this.scope.getSnapshot().value?.[NETWORK_PROXY_FIELD]
+    return this.proxyDraft ?? (typeof value === 'string' ? value : '')
+  }
+
   /**
    * Write the switch and the normalized URL TOGETHER, then re-seed from what
    * the Host accepted. The URL is validated first — an unusable draft blocks
@@ -160,11 +181,16 @@ export class AccelForm {
    * A save that did not land keeps its drafts so the user can correct them.
    */
   private async save(): Promise<void> {
-    if ((this.enabledDraft === undefined && this.urlDraft === undefined) || this.saving) return
+    if ((this.enabledDraft === undefined && this.urlDraft === undefined && this.proxyDraft === undefined) || this.saving) return
     const urlText = this.effectiveUrlText()
     if (accelerateUrlError(urlText) !== undefined) return
+    const proxyText = this.effectiveProxyText().trim()
+    if (proxyText !== '' && proxyUrlError(proxyText) !== undefined) return
     const intendedEnabled = this.enabledDraft ?? (this.scope.getSnapshot().value?.[ACCEL_ENABLED_FIELD] ?? false)
     const intendedUrl = normalizeAccelerateUrl(urlText)
+    // Only a staged proxy is written: a switch-only save must not rewrite an
+    // untouched key (and must keep working when the host rejects unknown keys).
+    const writeProxy = this.proxyDraft !== undefined
     this.saving = true
     this.failed = false
     this.publish()
@@ -172,10 +198,11 @@ export class AccelForm {
     try {
       await this.scope.set(ACCEL_ENABLED_FIELD, intendedEnabled)
       await this.scope.set(ACCEL_URL_FIELD, intendedUrl)
+      if (writeProxy) await this.scope.set(NETWORK_PROXY_FIELD, proxyText)
       // The Host is the only authority on acceptance: both keys must read
       // back as written, or the pair did not land as staged.
       const user = this.userLayer()
-      if (user?.[ACCEL_ENABLED_FIELD] !== intendedEnabled || user?.[ACCEL_URL_FIELD] !== intendedUrl) {
+      if (user?.[ACCEL_ENABLED_FIELD] !== intendedEnabled || user?.[ACCEL_URL_FIELD] !== intendedUrl || (writeProxy && (user?.[NETWORK_PROXY_FIELD] ?? '') !== proxyText)) {
         landed = false
       }
     } catch (_settingsWriteFailure) {
@@ -184,6 +211,7 @@ export class AccelForm {
     if (landed) {
       this.enabledDraft = undefined
       this.urlDraft = undefined
+      this.proxyDraft = undefined
     }
     this.saving = false
     this.failed = !landed
@@ -201,17 +229,22 @@ export class AccelForm {
     const storedEnabled = snapshot.value?.[ACCEL_ENABLED_FIELD] ?? false
     const storedUrl = snapshot.value?.[ACCEL_URL_FIELD] ?? ACCEL_DEFAULT_URL
     const urlText = this.effectiveUrlText()
+    const storedProxy = typeof snapshot.value?.[NETWORK_PROXY_FIELD] === 'string' ? snapshot.value[NETWORK_PROXY_FIELD] as string : ''
+    const proxyText = this.effectiveProxyText()
     const enabledDirty = this.enabledDraft !== undefined && this.enabledDraft !== storedEnabled
     const urlDirty = this.urlDraft !== undefined && this.urlDraft !== storedUrl
+    const proxyDirty = this.proxyDraft !== undefined && this.proxyDraft !== storedProxy
     return {
       available: snapshot.status === 'ready',
       writable: snapshot.writable,
       enabled: this.enabledDraft ?? storedEnabled,
       urlText,
-      dirty: enabledDirty || urlDirty,
+      dirty: enabledDirty || urlDirty || proxyDirty,
       saving: this.saving,
       failed: this.failed,
       urlError: accelerateUrlError(urlText) ?? null,
+      proxyText,
+      proxyError: proxyText.trim() === '' ? null : (proxyUrlError(proxyText.trim()) ?? null),
     }
   }
 

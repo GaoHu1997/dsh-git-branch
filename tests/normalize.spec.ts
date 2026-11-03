@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ACCEL_DEFAULT_URL, accelerateUrlError, branchNameIssue, isAbsoluteConfigPath, localBranchName, normalizeAccelerateUrl, remoteNameIssue, remoteUrlIssue, sanitizeBranchDir, splitRemoteBranch } from '../src/normalize.ts'
+import { ACCEL_DEFAULT_URL, accelerateUrlError, branchNameIssue, isAbsoluteConfigPath, localBranchName, normalizeAccelerateUrl, proxyUrlError, remoteNameIssue, remoteUrlIssue, sanitizeBranchDir, splitRemoteBranch } from '../src/normalize.ts'
 
 describe('sanitizeBranchDir', () => {
   it('keeps plain names unchanged', () => {
@@ -177,5 +177,29 @@ describe('remoteUrlIssue', () => {
     expect(remoteUrlIssue('-u')).toBe('invalid')
     expect(remoteUrlIssue('not a url')).toBe('whitespace')
     expect(remoteUrlIssue('origin')).toBe('invalid')
+  })
+})
+
+describe('proxyUrlError', () => {
+  it('accepts absolute http(s) and socks proxies with a port', () => {
+    expect(proxyUrlError('http://127.0.0.1:7890')).toBeUndefined()
+    expect(proxyUrlError('https://proxy.example:8443')).toBeUndefined()
+    expect(proxyUrlError('socks5://127.0.0.1:1080')).toBeUndefined()
+    expect(proxyUrlError('socks5h://127.0.0.1:1080/')).toBeUndefined()
+  })
+
+  it('rejects a bare host:port and unknown schemes', () => {
+    expect(proxyUrlError('127.0.0.1:7890')).toMatch(/absolute proxy URL/)
+    expect(proxyUrlError('ftp://127.0.0.1:7890')).toMatch(/scheme must be one of/)
+  })
+
+  it('rejects a missing port and embedded credentials', () => {
+    expect(proxyUrlError('http://127.0.0.1')).toMatch(/proxy port/)
+    expect(proxyUrlError('http://user:secret@127.0.0.1:7890')).toMatch(/credentials/)
+  })
+
+  it('rejects a path, query, or fragment', () => {
+    expect(proxyUrlError('http://127.0.0.1:7890/path')).toMatch(/path, query, or fragment/)
+    expect(proxyUrlError('http://127.0.0.1:7890?x=1')).toMatch(/path, query, or fragment/)
   })
 })

@@ -634,7 +634,7 @@ export function GitPanelTab(props: GitPanelTabProps): JSX.Element {
               {accelState.enabled ? <span className={css.cnDot} aria-hidden="true" /> : null}
             </button>
             {accelOpen
-              ? <CnAcceleratePopover accel={accel} t={t} pushToast={pushToast} onClose={closeAccel} />
+              ? <CnAcceleratePopover accel={accel} t={t} pushToast={pushToast} cwd={cwd} onClose={closeAccel} />
               : null}
           </div>
           <button

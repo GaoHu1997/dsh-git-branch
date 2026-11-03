@@ -86,6 +86,19 @@ describe('config section shapes', () => {
     expect(() => validateConfig({ cnAccelerateUrl: 5 as unknown as string })).toThrow('"cnAccelerateUrl" must be an http(s) URL without whitespace')
   })
 
+  it('accepts a proxy URL only when git could use it, and keeps it out of the section when unset', () => {
+    expect(() => validateConfig({ networkProxy: 'http://127.0.0.1:7890' })).not.toThrow()
+    expect(() => validateConfig({ networkProxy: 'socks5://127.0.0.1:1080' })).not.toThrow()
+    expect(() => validateConfig({ networkProxy: '' })).not.toThrow()
+    expect(() => validateConfig({ networkProxy: '127.0.0.1:7890' })).toThrow('"networkProxy" must be an http(s)/socks5 proxy URL without credentials')
+    expect(() => validateConfig({ networkProxy: 'http://user:pw@127.0.0.1:7890' })).toThrow('without credentials')
+    expect(() => validateConfig({ networkProxy: 5 as unknown as string })).toThrow('without credentials')
+    // Unset (or blank) stays absent so a lower layer can keep its own value.
+    expect(sectionOf({})).not.toHaveProperty('networkProxy')
+    expect(sectionOf({ networkProxy: '' })).not.toHaveProperty('networkProxy')
+    expect(sectionOf({ networkProxy: 'http://127.0.0.1:7890' })).toMatchObject({ networkProxy: 'http://127.0.0.1:7890' })
+  })
+
   it('requires the prune cap to be an integer >= 1', () => {
     expect(() => validateConfig({ keepWorktrees: 1 })).not.toThrow()
     expect(() => validateConfig({ keepWorktrees: 500 })).not.toThrow()

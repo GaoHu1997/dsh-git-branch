@@ -59,3 +59,4 @@
 - [0040 — 加速前缀保留完整 GitHub URL](0040-accelerate-complete-github-url.md)
 - [0041 — 网络预算分级、写前探测与超时后核验](0041-network-budgets-and-push-verification.md)
 - [0042 — 直连失败时按 IP 优选换路（运行时 DoH、并发竞速）](0042-ip-optimized-fallback-channel.md)
+- [0043 — 代理成为第三通道：显式 networkProxy、只读系统代理探测、通道链与 /network-probe](0043-explicit-proxy-channel-and-probe.md)

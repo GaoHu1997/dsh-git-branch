@@ -626,15 +626,18 @@ export async function fetchAll(exec: Exec, repoRoot: string, accelPrefix?: strin
     // anything. The first remote's URL stands for the fetch: with one remote
     // (the normal case) it IS the fetch.
     const failure = error instanceof GitError ? classifyGitFailure(error.stderr, { timedOut: error.timedOut }) : undefined
-    if (failure === undefined || !failure.retryable || options.fallbackChannel === undefined) throw error
+    if (failure === undefined || !failure.retryable || (options.fallbackChannels ?? []).length === 0) throw error
     const names = (await gitMaybe(exec, repoRoot, ['remote']))?.split('\n').map(item => item.trim()).filter(item => item !== '') ?? []
     const first = names[0]
     if (first === undefined) throw error
     const endpoint = (await gitMaybe(exec, repoRoot, ['remote', 'get-url', first]))?.trim() ?? ''
     if (endpoint === '') throw error
-    const channel = await options.fallbackChannel(endpoint)
-    if (channel === undefined) throw error
-    await git(exec, repoRoot, [...channel, ...base, 'fetch', '--all', '--prune'], FETCH_TIMEOUT_MS)
+    // The probe IS the retry here: reading is idempotent, so a successful
+    // channel probe has already performed the work.
+    await firstWorkingChannel(endpoint, options, async channel => {
+      await git(exec, repoRoot, [...channel, ...base, 'fetch', '--all', '--prune'], FETCH_TIMEOUT_MS)
+    })
+      .catch(() => { throw error })
   }
 }
 
@@ -695,11 +698,37 @@ export interface NetworkOptions {
   channelArgs?: readonly string[]
   /**
    * Consulted ONLY after the direct channel's probe failed in a way another
-   * channel could plausibly fix (unreachable/reset/timeout). Answers argv for
-   * a replacement channel — a pinned edge IP, a proxy — which is probed
-   * again before it is used. Undefined = there is no other channel.
+   * channel could plausibly fix (unreachable/reset/timeout), in order, until
+   * one of them answers argv that ALSO passes its own probe. Each provider
+   * answers undefined when it does not apply (a mirror URL, an unconfigured
+   * proxy) — that is a skip, not a failure. Empty/absent = direct only.
    */
-  fallbackChannel?: (endpoint: string) => Promise<readonly string[] | undefined>
+  fallbackChannels?: readonly ChannelProvider[]
+}
+
+/** Answers the argv for one replacement channel, or undefined when it does not apply. */
+export type ChannelProvider = (endpoint: string) => Promise<readonly string[] | undefined>
+
+/**
+ * Walk the fallback chain until one provider yields a channel that answers
+ * its own probe. A provider that returns argv which cannot reach the endpoint
+ * is skipped, not fatal: the direct error is still the one worth reporting.
+ * @param endpoint - URL the command talks to.
+ * @param options - caller's channel list.
+ * @param probe - probe for one candidate argv (throws when it fails).
+ */
+async function firstWorkingChannel(endpoint: string, options: NetworkOptions, probe: (args: readonly string[]) => Promise<void>): Promise<readonly string[] | undefined> {
+  for (const provider of options.fallbackChannels ?? []) {
+    const args = await provider(endpoint)
+    if (args === undefined) continue
+    try {
+      await probe(args)
+      return args
+    } catch {
+      // Try the next provider; the caller reports the direct failure if none works.
+    }
+  }
+  return undefined
 }
 
 /**
@@ -724,10 +753,11 @@ async function chooseChannel(exec: Exec, cwd: string, target: PushTarget, option
     // A credential or divergence failure is about state, not reachability:
     // pinning an IP would just fail again with the same message.
     const failure = error instanceof GitError ? classifyGitFailure(error.stderr, { timedOut: error.timedOut }) : undefined
-    if (failure === undefined || !failure.retryable || options.fallbackChannel === undefined) throw error
-    const fallback = await options.fallbackChannel(target.url)
+    if (failure === undefined || !failure.retryable) throw error
+    const fallback = await firstWorkingChannel(target.url, options, async args => {
+      await probePushTarget(exec, cwd, target, { channelArgs: args }, authArgs)
+    })
     if (fallback === undefined) throw error
-    await probePushTarget(exec, cwd, target, { channelArgs: fallback }, authArgs)
     return fallback
   }
 }
@@ -908,7 +938,7 @@ export async function pushTag(exec: Exec, cwd: string, name: string, remote: str
   // without one a tag needs no extra probe (and no extra remote lookup).
   let target: PushTarget = { remote }
   let channel = options.channelArgs ?? []
-  if (options.fallbackChannel !== undefined) {
+  if ((options.fallbackChannels ?? []).length > 0) {
     const url = (await gitMaybe(exec, cwd, ['remote', 'get-url', '--push', remote]))?.trim() ?? ''
     target = url === '' ? { remote } : { remote, url }
     channel = await chooseChannel(exec, cwd, target, options, authArgs)
