@@ -116,8 +116,8 @@ export function accelerateUrlError(value: string): AccelerateUrlIssue | undefine
 
 /**
  * Normalize an accepted accelerate URL: trim, and append the trailing `/`
- * the prefix concatenation requires (`https://gh-proxy.com/` + `o/r.git`
- * must stay one valid URL). Callers pass the result to `url.<base>.insteadOf`.
+ * the prefix concatenation requires (`https://gh-proxy.com/` + the complete
+ * `https://github.com/o/r.git` URL). accelArgs builds the Git rewrite base.
  * @param value - an accepted (non-empty, http(s), whitespace-free) URL.
  * @returns the prefix ending in `/`.
  */
