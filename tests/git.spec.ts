@@ -991,10 +991,10 @@ describe('network channel fallback', () => {
     ])
     const asked: string[] = []
     const outcome = await pushBranch(exec, '/repo', [], {
-      fallbackChannel: async endpoint => {
+      fallbackChannels: [async endpoint => {
         asked.push(endpoint)
         return PIN
-      },
+      }],
     })
     expect(asked).toEqual(['https://github.com/o/r.git'])
     expect(outcome).toEqual({ branch: 'main', pushed: true })
@@ -1013,15 +1013,15 @@ describe('network channel fallback', () => {
     ])
     const asked: string[] = []
     await expect(pushBranch(exec, '/repo', [], {
-      fallbackChannel: async endpoint => {
+      fallbackChannels: [async endpoint => {
         asked.push(endpoint)
         return PIN
-      },
+      }],
     })).rejects.toThrow('terminal prompts disabled')
     expect(asked).toEqual([])
   })
 
-  it('keeps the direct error when the fallback cannot reach the endpoint either', async () => {
+  it('keeps the direct error when no fallback channel can reach the endpoint either', async () => {
     const exec = scripted([
       { args: ['rev-parse', '@{u}'], out: { stdout: 'abc\n' } },
       { args: ['branch', '--show-current'], out: { stdout: 'main\n' } },
@@ -1031,8 +1031,11 @@ describe('network channel fallback', () => {
       { args: ['ls-remote', '--heads', 'https://github.com/o/r.git'], out: { code: 128, stderr: 'Connection was reset\n' } },
       { args: PIN, out: { code: 128, stderr: 'Failed to connect\n' } },
     ])
-    await expect(pushBranch(exec, '/repo', [], { fallbackChannel: async () => PIN }))
-      .rejects.toThrow('Failed to connect')
+    // With several channels, none of them working is still just the direct
+    // path being unreachable: the fallback attempts must not overwrite the
+    // error the user can act on.
+    await expect(pushBranch(exec, '/repo', [], { fallbackChannels: [async () => PIN] }))
+      .rejects.toThrow('Connection was reset')
   })
 
   it('retries a failed fetch once on the fallback channel and nowhere else', async () => {
@@ -1044,14 +1047,14 @@ describe('network channel fallback', () => {
       { args: ['remote', 'get-url', 'origin'], out: { stdout: 'https://github.com/o/r.git\n' } },
       { args: [...PIN, 'fetch', '--all', '--prune'], out: { stdout: '' } },
     ])
-    await fetchAll(exec, '/repo', undefined, [], { fallbackChannel: async () => PIN })
+    await fetchAll(exec, '/repo', undefined, [], { fallbackChannels: [async () => PIN] })
   })
 
   it('does not retry a fetch that failed for a reason a channel cannot fix', async () => {
     const exec = scripted([
       { args: ['fetch', '--all', '--prune'], out: { code: 128, stderr: "fatal: could not read Username for 'https://github.com': terminal prompts disabled\n" } },
     ])
-    await expect(fetchAll(exec, '/repo', undefined, [], { fallbackChannel: async () => PIN }))
+    await expect(fetchAll(exec, '/repo', undefined, [], { fallbackChannels: [async () => PIN] }))
       .rejects.toThrow('terminal prompts disabled')
   })
 })

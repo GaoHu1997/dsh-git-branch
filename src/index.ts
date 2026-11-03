@@ -14,18 +14,19 @@ import z from '@deepseek-ai/schemastery'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 // Type-only: pulls the settings Context declaration merge (`ctx.settings`).
 import type {} from '@deepseek-ai/dsh-settings'
-import { childProcessExec } from './git.js'
+import { childProcessExec, type ChannelProvider } from './git.js'
 import { pinnedChannelFor, pinnedProbe } from './network-ip.js'
+import { proxyArgs, proxyUrlError, systemProxyUrl } from './network-proxy.js'
 import { ACCEL_DEFAULT_URL, accelerateUrlError } from './normalize.js'
 import {
-  handleCredentials, handleCredentialsDelete, handleCredentialsImport, handleCredentialsOAuthPoll, handleCredentialsOAuthStart, handleCredentialsSave, handleRemote, handleRemotes, handleAiCommitMessage, handleChanges, handleCommit, handleCommitFiles, handleCreateBranch, handleCreateTag, handleCreateWorktree, handleDeleteBranch, handleEnsureDirectory, handleFetch, handleGroupWorktrees, handleInspectWorktree, handleLog, handlePathExists, handlePurgeDirectory, handlePushTag, handleRemoveWorktree, handleRenameBranch, handleStage, handleStatus, handleSwitch, handleUpdate, handlePush, handleWorktreesAll,
+  handleCredentials, handleCredentialsDelete, handleCredentialsImport, handleCredentialsOAuthPoll, handleCredentialsOAuthStart, handleCredentialsSave, handleRemote, handleRemotes, handleAiCommitMessage, handleChanges, handleCommit, handleCommitFiles, handleCreateBranch, handleCreateTag, handleCreateWorktree, handleDeleteBranch, handleEnsureDirectory, handleFetch, handleGroupWorktrees, handleInspectWorktree, handleLog, handlePathExists, handlePurgeDirectory, handlePushTag, handleRemoveWorktree, handleRenameBranch, handleStage, handleStatus, handleSwitch, handleUpdate, handlePush, handleNetworkProbe, handleWorktreesAll,
   type LlmStreamRuntime, type RouteDeps, type RouteOutcome,
 } from './routes.js'
 import { validateRootDir } from './settings.js'
 import { gitNetworkTool } from './network-tool.js'
 import { gitCredentialsTool } from './tool.js'
 import { createCredentialService } from './credential-service.js'
-import { ROUTE_AI_COMMIT_MESSAGE, ROUTE_BRANCH, ROUTE_BRANCH_DELETE, ROUTE_BRANCH_RENAME, ROUTE_CHANGES, ROUTE_COMMIT, ROUTE_COMMIT_FILES, ROUTE_CREDENTIALS, ROUTE_CREDENTIALS_DELETE, ROUTE_CREDENTIALS_IMPORT, ROUTE_CREDENTIALS_OAUTH_POLL, ROUTE_CREDENTIALS_OAUTH_START, ROUTE_CREDENTIALS_SAVE, ROUTE_ENSURE_DIRECTORY, ROUTE_EXISTS, ROUTE_FETCH, ROUTE_GROUP, ROUTE_INSPECT, ROUTE_LOG, ROUTE_PUSH, ROUTE_PURGE, ROUTE_REMOTE, ROUTE_REMOTES, ROUTE_REMOVE, ROUTE_STAGE, ROUTE_STATUS, ROUTE_SWITCH, ROUTE_TAG, ROUTE_TAG_PUSH, ROUTE_UPDATE, ROUTE_WORKTREE, ROUTE_WORKTREES_ALL } from './wire.js'
+import { ROUTE_AI_COMMIT_MESSAGE, ROUTE_BRANCH, ROUTE_BRANCH_DELETE, ROUTE_BRANCH_RENAME, ROUTE_CHANGES, ROUTE_COMMIT, ROUTE_COMMIT_FILES, ROUTE_CREDENTIALS, ROUTE_CREDENTIALS_DELETE, ROUTE_CREDENTIALS_IMPORT, ROUTE_CREDENTIALS_OAUTH_POLL, ROUTE_CREDENTIALS_OAUTH_START, ROUTE_CREDENTIALS_SAVE, ROUTE_ENSURE_DIRECTORY, ROUTE_EXISTS, ROUTE_FETCH, ROUTE_GROUP, ROUTE_INSPECT, ROUTE_LOG, ROUTE_NETWORK_PROBE, ROUTE_PUSH, ROUTE_PURGE, ROUTE_REMOTE, ROUTE_REMOTES, ROUTE_REMOVE, ROUTE_STAGE, ROUTE_STATUS, ROUTE_SWITCH, ROUTE_TAG, ROUTE_TAG_PUSH, ROUTE_UPDATE, ROUTE_WORKTREE, ROUTE_WORKTREES_ALL } from './wire.js'
 
 export const name = 'dsh-git-branch'
 
@@ -63,6 +64,9 @@ export interface Config {
   cnAccelerate?: Volatile<boolean> | boolean
   /** cn-accelerate mirror prefix; absent = the shipped default. */
   cnAccelerateUrl?: Volatile<string> | string
+  /** Explicit proxy URL (http/https/socks5) tried before any other fallback;
+   * empty/absent = no proxy channel. */
+  networkProxy?: Volatile<string> | string
 }
 
 /** The shipped prune cap (whole storage root, valid git worktrees only). */
@@ -82,12 +86,13 @@ export const Config: z = z.object({
   postCreateCopyFiles: z.array(z.string()).default([]).volatile(),
   cnAccelerate: z.boolean().default(false).volatile(),
   cnAccelerateUrl: z.string().default(ACCEL_DEFAULT_URL).volatile(),
+  networkProxy: z.string().default('').volatile(),
 })
 
 /** Reject stale or misspelled config keys before defaults can hide them. */
 export function validateConfig(config: Config): void {
   const unknown = Object.keys(config).find(key =>
-    key !== 'rootDir' && key !== 'groupSidebar' && key !== 'fetchBeforeCreate' && key !== 'autoPruneWorktrees' && key !== 'keepWorktrees' && key !== 'postCreateCopyFiles' && key !== 'cnAccelerate' && key !== 'cnAccelerateUrl')
+    key !== 'rootDir' && key !== 'groupSidebar' && key !== 'fetchBeforeCreate' && key !== 'autoPruneWorktrees' && key !== 'keepWorktrees' && key !== 'postCreateCopyFiles' && key !== 'cnAccelerate' && key !== 'cnAccelerateUrl' && key !== 'networkProxy')
   if (unknown !== undefined) {
     throw new Error(`GitWorktreeConfig: unknown key "${unknown}"`)
   }
@@ -118,6 +123,7 @@ export function validateConfig(config: Config): void {
     throw new Error('GitWorktreeConfig: "cnAccelerate" must be a boolean')
   }
   validateCnAccelerateUrl(readVolatile(config.cnAccelerateUrl))
+  validateNetworkProxy(readVolatile(config.networkProxy))
   validateKeepWorktrees(readVolatile(config.keepWorktrees))
   validateRootDir(root)
 }
@@ -132,6 +138,18 @@ export function validateCnAccelerateUrl(value: string | undefined): void {
   if (value === undefined) return
   if (typeof value !== 'string' || accelerateUrlError(value) !== undefined) {
     throw new Error('GitWorktreeConfig: "cnAccelerateUrl" must be an http(s) URL without whitespace')
+  }
+}
+
+/**
+ * An explicit proxy must be a URL git can hand to libcurl: no credentials
+ * (they would be stored and displayed in clear text), no path. Empty means
+ * "no proxy channel", which is the default and always valid.
+ */
+export function validateNetworkProxy(value: string | undefined): void {
+  if (value === undefined || value === '') return
+  if (typeof value !== 'string' || proxyUrlError(value) !== undefined) {
+    throw new Error('GitWorktreeConfig: "networkProxy" must be an http(s)/socks5 proxy URL without credentials')
   }
 }
 
@@ -170,6 +188,8 @@ export interface SectionConfig {
   cnAccelerate?: boolean
   /** cn-accelerate mirror prefix; absent = the shipped default. */
   cnAccelerateUrl?: string
+  /** Explicit proxy URL; absent/blank = no proxy channel. */
+  networkProxy?: string
 }
 
 
@@ -185,10 +205,12 @@ export function sectionOf(config: Config): SectionConfig {
   const keepWorktrees = readVolatile(config.keepWorktrees)
   const cnAccelerate = readVolatile(config.cnAccelerate)
   const cnAccelerateUrl = readVolatile(config.cnAccelerateUrl)
+  const networkProxy = readVolatile(config.networkProxy)
   return {
     ...(rootDir === undefined ? {} : { rootDir }),
     ...(postCreateCopyFiles === undefined ? {} : { postCreateCopyFiles }),
     ...(cnAccelerateUrl === undefined ? {} : { cnAccelerateUrl }),
+    ...(networkProxy === undefined || networkProxy === '' ? {} : { networkProxy }),
     // The composition layer spells the shipped defaults so a user-layer
     // unset can always fall back to them.
     groupSidebar: groupSidebar ?? true,
@@ -232,12 +254,22 @@ export function apply(ctx: Context, config: Config = {}): void {
 
   const deps = (): RouteDeps => ({
     exec: childProcessExec,
-    networkChannel: (exec, cwd, authArgs) => endpoint => pinnedChannelFor({ endpoint, probe: pinnedProbe(exec, cwd, endpoint, authArgs) }),
+    networkChannels: (exec, cwd, authArgs) => {
+      const providers: ChannelProvider[] = []
+      // An explicit proxy outranks the IP heuristic: the user configured it
+      // because it is the path they trust. Absent/blank = no proxy channel.
+      const proxy = readVolatile(currentConfig().networkProxy)
+      if (proxy !== undefined && proxy !== '') providers.push(async () => proxyArgs(proxy))
+      providers.push(endpoint => pinnedChannelFor({ endpoint, probe: pinnedProbe(exec, cwd, endpoint, authArgs) }))
+      return providers
+    },
     sectionRootDir: () => readVolatile(currentConfig().rootDir),
     sectionFetchBeforeCreate: () => readVolatile(currentConfig().fetchBeforeCreate),
     sectionPostCreateCopyFiles: () => readVolatile(currentConfig().postCreateCopyFiles),
     sectionCnAccelerate: () => readVolatile(currentConfig().cnAccelerate),
     sectionCnAccelerateUrl: () => readVolatile(currentConfig().cnAccelerateUrl),
+    sectionNetworkProxy: () => readVolatile(currentConfig().networkProxy),
+    sectionSystemProxy: () => systemProxyUrl(childProcessExec, homedir()),
     home: () => homedir(),
     envHome: () => process.env.DSH_HOME,
     credentialsService: credentials,
@@ -334,6 +366,7 @@ export function apply(ctx: Context, config: Config = {}): void {
     postRoute(ROUTE_GROUP, 'group', handleGroupWorktrees)
     postRoute(ROUTE_UPDATE, 'update', handleUpdate)
     postRoute(ROUTE_PUSH, 'push', handlePush)
+    postRoute(ROUTE_NETWORK_PROBE, 'network-probe', handleNetworkProbe)
     postRoute(ROUTE_INSPECT, 'inspect', handleInspectWorktree)
     postRoute(ROUTE_REMOVE, 'remove', handleRemoveWorktree)
     postRoute(ROUTE_EXISTS, 'exists', handlePathExists)

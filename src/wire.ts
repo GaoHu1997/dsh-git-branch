@@ -82,6 +82,9 @@ export const ROUTE_TAG = `${ROUTE_PREFIX}/tag`
 /** POST ROUTE_PREFIX/tag-push — push ONE existing local tag to its remote. */
 export const ROUTE_TAG_PUSH = `${ROUTE_PREFIX}/tag-push`
 
+/** POST ROUTE_PREFIX/network-probe — read the endpoint through every configured channel (diagnostics; no state change). */
+export const ROUTE_NETWORK_PROBE = `${ROUTE_PREFIX}/network-probe`
+
 /** POST ROUTE_PREFIX/credentials — the global per-host credentials, secrets
  * masked (the stored secret never leaves the host). */
 export const ROUTE_CREDENTIALS = `${ROUTE_PREFIX}/credentials`
@@ -841,3 +844,35 @@ export interface RemoteMutationBody {
 
 /** POST remote response body: the repository's remotes after the change. */
 export type RemoteMutationResult = RemotesResult
+
+
+/** The network channels a probe can report, in the order they are tried. */
+export type NetworkChannelId = 'direct' | 'proxy' | 'ip'
+
+/** One channel's verdict from ROUTE_NETWORK_PROBE. */
+export interface NetworkChannelReport {
+  /** Which channel was attempted. */
+  channel: NetworkChannelId
+  /** Whether an ls-remote answered within the probe budget. */
+  ok: boolean
+  /** Wall-clock milliseconds the attempt took. */
+  elapsedMs: number
+  /** Why it failed, trimmed for display; absent when ok. */
+  detail?: string
+}
+
+/** POST network-probe request body. */
+export interface NetworkProbeBody {
+  /** Any directory inside the repository. */
+  repoPath: string
+}
+
+/** POST network-probe response body: one verdict per configured channel. */
+export interface NetworkProbeResult {
+  /** The endpoint that was probed (the push URL when the branch has one). */
+  url: string
+  /** One entry per configured channel. */
+  channels: NetworkChannelReport[]
+  /** The WinINET proxy when one is enabled but not configured in the plugin. */
+  systemProxy?: string
+}

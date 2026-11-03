@@ -9,24 +9,30 @@ import { runPostCreateCopy, type CopyFilesSeams } from './copy-files.js'
 import { credentialHostIssue, credentialSecretIssue, credentialUsernameIssue, createLocalCredentialStore, maskSecret, normalizeCredentialHost, removeCredential, sortCredentials, upsertCredential, type CredentialStore, type GitCredential } from './credentials.js'
 import type { CredentialService } from './credential-service.js'
 import { importLocalCredentials as runLocalImport, type LocalImportReport } from './local-import.js'
-import { appendWorktreeExclude, fsExcludeSeams, GitError, addRemote, addWorktree, addWorktreeCutout, collectAiDiff, commitFiles, commitIndex, createBranch, createTag, cutoutBranchName, deleteBranch, fetchAll, fsDirExists, inspectWorktree, isAbsoluteDir, isStageablePath, listRemotes, listTagNames, logHistory, probeRepo, probeWorkspaceGit, pushTag, removeRemote, removeWorktree, renameBranch, resolveBranch, resolvePushRemote, pushBranch, setRemoteUrl, stagePaths, switchBranch, updateBranch, workingChanges, type DirExists, type ExcludeSeams, type Exec } from './git.js'
+import { appendWorktreeExclude, fsExcludeSeams, GitError, addRemote, addWorktree, addWorktreeCutout, collectAiDiff, commitFiles, commitIndex, createBranch, createTag, cutoutBranchName, deleteBranch, fetchAll, fsDirExists, inspectWorktree, isAbsoluteDir, isStageablePath, listRemotes, listTagNames, logHistory, probeRepo, probeWorkspaceGit, pushTag, removeRemote, removeWorktree, renameBranch, resolveBranch, resolvePushRemote, resolvePushTarget, pushBranch, setRemoteUrl, stagePaths, switchBranch, updateBranch, workingChanges, type ChannelProvider, type DirExists, type ExcludeSeams, type Exec, type NetworkOptions } from './git.js'
 import { classifyGitFailure, withHint } from './network.js'
+import { channelReport } from './network-probe.js'
 import { ACCEL_DEFAULT_URL, accelerateUrlError, isAbsoluteConfigPath, normalizeAccelerateUrl, remoteNameIssue, remoteUrlIssue, sanitizeBranchDir, type RemoteNameIssue, type RemoteUrlIssue } from './normalize.js'
 import { deviceFlowClientId, isDeviceFlowHost, pollDeviceFlow, startDeviceFlow, type DeviceFlowPoll } from './oauth.js'
 import { resolveRootDir } from './settings.js'
 import { COMMIT_MESSAGE_LIMIT } from './wire.js'
 import type {
-  AiCommitMessageBody, AiCommitMessageResult, ChangesBody, ChangesResult, CommitBody, CommitFilesBody, CommitFilesResult, CommitResult, CreateBranchBody, CreateBranchResult, CreateTagBody, CreateTagResult, CreateWorktreeBody, CreateWorktreeResult, CredentialDeleteBody, CredentialEntryView, CredentialOAuthPollBody, CredentialOAuthPollResult, CredentialOAuthStartBody, CredentialOAuthStartResult, CredentialImportResult, CredentialSaveBody, CredentialsResult, DeleteBranchBody, DeleteBranchResult, EnsureDirectoryBody, EnsureDirectoryResult, FetchBody, FetchResult, GroupWorkspacesResult, InspectWorktreeBody, InspectWorktreeResult, LogBody, LogResult, PathExistsResult, PurgeDirectoryBody, PurgeDirectoryResult, PushTagBody, PushTagResult, RemoteAction, RemoveWorktreeBody, RemoveWorktreeResult, RemotesBody, RemotesResult, RemoteMutationBody, RenameBranchBody, RenameBranchResult, RepoStatus, RouteError, StageBody, StageResult, SwitchBody, SwitchResult, UpdateBody, UpdateResult, PushBody, PushResult, WorktreesAllResult,
+  AiCommitMessageBody, NetworkChannelId, NetworkProbeBody, NetworkProbeResult, AiCommitMessageResult, ChangesBody, ChangesResult, CommitBody, CommitFilesBody, CommitFilesResult, CommitResult, CreateBranchBody, CreateBranchResult, CreateTagBody, CreateTagResult, CreateWorktreeBody, CreateWorktreeResult, CredentialDeleteBody, CredentialEntryView, CredentialOAuthPollBody, CredentialOAuthPollResult, CredentialOAuthStartBody, CredentialOAuthStartResult, CredentialImportResult, CredentialSaveBody, CredentialsResult, DeleteBranchBody, DeleteBranchResult, EnsureDirectoryBody, EnsureDirectoryResult, FetchBody, FetchResult, GroupWorkspacesResult, InspectWorktreeBody, InspectWorktreeResult, LogBody, LogResult, PathExistsResult, PurgeDirectoryBody, PurgeDirectoryResult, PushTagBody, PushTagResult, RemoteAction, RemoveWorktreeBody, RemoveWorktreeResult, RemotesBody, RemotesResult, RemoteMutationBody, RenameBranchBody, RenameBranchResult, RepoStatus, RouteError, StageBody, StageResult, SwitchBody, SwitchResult, UpdateBody, UpdateResult, PushBody, PushResult, WorktreesAllResult,
 } from './wire.js'
 
 /** Everything the handlers need from the host half. */
 export interface RouteDeps {
   exec: Exec
-  /** Channel provider for the IP-optimized fallback (absent = direct only;
-   * tests leave it out so no real lookup or race ever runs). */
-  networkChannel?: (exec: Exec, cwd: string, authArgs: readonly string[]) => (endpoint: string) => Promise<readonly string[] | undefined>
+  /** Fallback channels for a network command, in priority order: the
+   * explicit proxy first, then the IP-optimized channel (absent = direct only; tests leave
+   * it out so no real lookup, race, or proxy argv ever runs). */
+  networkChannels?: (exec: Exec, cwd: string, authArgs: readonly string[]) => readonly ChannelProvider[]
   /** The settings-resolved rootDir (absent/blank = the default location). */
   sectionRootDir: () => string | undefined
+  /** Explicit proxy URL for the proxy channel; absent/blank = none. */
+  sectionNetworkProxy?: () => string | undefined
+  /** The proxy Windows itself has enabled (read-only WinINET probe); absent = not looked up. */
+  sectionSystemProxy?: () => Promise<string | undefined>
   /** Whether a worktree creation syncs the remotes first (absent = off). */
   sectionFetchBeforeCreate: () => boolean | undefined
   /** Post-create configuration files to copy when .worktreeinclude is absent. */
@@ -102,7 +108,7 @@ export async function fsMkdirRecursive(path: string): Promise<void> {
 /** One route outcome: HTTP status plus the JSON body. */
 export interface RouteOutcome {
   status: number
-  body: RepoStatus | CreateWorktreeResult | SwitchResult | CreateBranchResult | FetchResult | UpdateResult | GroupWorkspacesResult | InspectWorktreeResult | RemoveWorktreeResult | PathExistsResult | EnsureDirectoryResult | WorktreesAllResult | PurgeDirectoryResult | ChangesResult | StageResult | CommitResult | LogResult | CommitFilesResult | CreateTagResult | PushTagResult | AiCommitMessageResult | CredentialsResult | CredentialOAuthStartResult | CredentialOAuthPollResult | CredentialImportResult | RemotesResult | RouteError
+  body: RepoStatus | CreateWorktreeResult | SwitchResult | CreateBranchResult | FetchResult | UpdateResult | GroupWorkspacesResult | InspectWorktreeResult | RemoveWorktreeResult | PathExistsResult | EnsureDirectoryResult | WorktreesAllResult | PurgeDirectoryResult | ChangesResult | StageResult | CommitResult | LogResult | CommitFilesResult | CreateTagResult | PushTagResult | AiCommitMessageResult | CredentialsResult | CredentialOAuthStartResult | CredentialOAuthPollResult | CredentialImportResult | RemotesResult | NetworkProbeResult | RouteError
 }
 
 /** Uniform failure envelope. */
@@ -120,6 +126,12 @@ function accelPrefix(deps: RouteDeps): string | undefined {
   if (deps.sectionCnAccelerate?.() !== true) return undefined
   const url = deps.sectionCnAccelerateUrl?.() ?? ACCEL_DEFAULT_URL
   return accelerateUrlError(url) === undefined ? normalizeAccelerateUrl(url) : undefined
+}
+
+/** The fallback chain for one command: the host's providers, or none at all. */
+function networkOptions(deps: RouteDeps, cwd: string, authArgs: readonly string[]): NetworkOptions {
+  const channels = deps.networkChannels?.(deps.exec, cwd, authArgs) ?? []
+  return channels.length === 0 ? {} : { fallbackChannels: channels }
 }
 
 /** The global credential store: the service's shared instance (decision 0037),
@@ -532,8 +544,7 @@ export async function handleCreateWorktree(deps: RouteDeps, body: unknown): Prom
         try {
           {
         const authArgs = await authArgsFor(deps)
-        const fallback = deps.networkChannel?.(deps.exec, facts.repoRoot, authArgs)
-        await fetchAll(deps.exec, facts.repoRoot, accelPrefix(deps), authArgs, fallback === undefined ? {} : { fallbackChannel: fallback })
+        await fetchAll(deps.exec, facts.repoRoot, accelPrefix(deps), authArgs, networkOptions(deps, facts.repoRoot, authArgs))
       }
         } catch (error) {
           fetchWarning = error instanceof GitError ? error.stderr.trim() : error instanceof Error ? error.message : String(error)
@@ -741,8 +752,7 @@ export async function handleFetch(deps: RouteDeps, body: unknown): Promise<Route
     if (facts === undefined) return fail(400, `"${repoPath}" is not inside a git repository`)
     {
       const authArgs = await authArgsFor(deps)
-      const fallback = deps.networkChannel?.(deps.exec, facts.repoRoot, authArgs)
-      await fetchAll(deps.exec, facts.repoRoot, accelPrefix(deps), authArgs, fallback === undefined ? {} : { fallbackChannel: fallback })
+      await fetchAll(deps.exec, facts.repoRoot, accelPrefix(deps), authArgs, networkOptions(deps, facts.repoRoot, authArgs))
     }
     const result: FetchResult = { remote: 'all' }
     return { status: 200, body: result }
@@ -799,8 +809,7 @@ export async function handlePush(deps: RouteDeps, body: unknown): Promise<RouteO
     // The session's OWN worktree, not the main checkout: in a linked-worktree
     // session "push current branch" means the branch that worktree holds.
     const authArgs = await authArgsFor(deps)
-    const fallback = deps.networkChannel?.(deps.exec, facts.toplevel, authArgs)
-    const outcome = await pushBranch(deps.exec, facts.toplevel, authArgs, fallback === undefined ? {} : { fallbackChannel: fallback })
+    const outcome = await pushBranch(deps.exec, facts.toplevel, authArgs, networkOptions(deps, facts.toplevel, authArgs))
     const result: PushResult = { branch: outcome.branch, pushed: outcome.pushed, ...(outcome.note === undefined ? {} : { note: outcome.note }) }
     return { status: 200, body: result }
   } catch (error) {
@@ -1190,8 +1199,7 @@ export async function handlePushTag(deps: RouteDeps, body: unknown): Promise<Rou
     const choice = await resolvePushRemote(deps.exec, facts.toplevel)
     if (!choice.ok) return fail(400, choice.message)
     const authArgs = await authArgsFor(deps)
-    const fallback = deps.networkChannel?.(deps.exec, facts.toplevel, authArgs)
-    const result = await pushTag(deps.exec, facts.toplevel, name, choice.remote, authArgs, fallback === undefined ? {} : { fallbackChannel: fallback })
+    const result = await pushTag(deps.exec, facts.toplevel, name, choice.remote, authArgs, networkOptions(deps, facts.toplevel, authArgs))
     const body: PushTagResult = { ...result, ...(result.note === undefined ? {} : { note: result.note }) }
     return { status: 200, body }
   } catch (error) {
@@ -1642,4 +1650,66 @@ export async function handleRemote(deps: RouteDeps, body: unknown): Promise<Rout
     if (error instanceof GitError) return gitFailure(error)
     return fail(500, error instanceof Error ? error.message : String(error))
   }
+}
+
+/**
+ * Report which network channel can read the repository's endpoint right now.
+ *
+ * Diagnostics only: nothing here writes to git or to the config. Each
+ * channel gets its own budget (PROBE_TIMEOUT_MS), so a dead proxy costs one
+ * timeout and the answer still names the channels that work. The system
+ * proxy is reported when the plugin has none of its own — git ignores
+ * WinINET, so a value here is a suggestion the user must opt into (0043).
+ * @param deps - route dependencies (exec, channel providers, config readers).
+ * @param body - `{ repoPath }`.
+ * @returns one report per channel, in the order the write path would try them.
+ */
+export async function handleNetworkProbe(deps: RouteDeps, body: unknown): Promise<RouteOutcome> {
+  const parsed = readBody<NetworkProbeBody>(body, ['repoPath'])
+  if (isOutcome(parsed)) return parsed
+  const { repoPath } = parsed
+  if (!isAbsoluteDir(repoPath)) return fail(400, '"repoPath" must be an absolute directory')
+  try {
+    const facts = await probeRepo(deps.exec, repoPath, deps.dirExists)
+    if (facts === undefined) return fail(400, JSON.stringify(repoPath) + " is not inside a git repository")
+    const authArgs = await authArgsFor(deps)
+    const url = await probeEndpoint(deps.exec, facts.repoRoot, authArgs)
+    if (url === undefined) return fail(400, '"repoPath" has no remote to probe')
+    const channels = [await channelReport(deps.exec, facts.repoRoot, 'direct', url, [], authArgs)]
+    for (const provider of deps.networkChannels?.(deps.exec, facts.repoRoot, authArgs) ?? []) {
+      const argv = await provider(url)
+      if (argv === undefined || argv.length === 0) continue
+      const channel: NetworkChannelId = argv.some(item => item.startsWith('http.proxy=')) ? 'proxy' : 'ip'
+      if (channels.some(report => report.channel === channel)) continue
+      channels.push(await channelReport(deps.exec, facts.repoRoot, channel, url, argv, authArgs))
+    }
+    const systemProxy = await deps.sectionSystemProxy?.()
+    const result: NetworkProbeResult = {
+      url,
+      channels,
+      ...(systemProxy === undefined || systemProxy === '' ? {} : { systemProxy }),
+    }
+    return { status: 200, body: result }
+  } catch (error) {
+    if (error instanceof GitError) return gitFailure(error)
+    throw error
+  }
+}
+
+/**
+ * The endpoint a probe should read: the upstream's push URL when the branch
+ * tracks one, otherwise the push URL of `origin` (or the first remote).
+ * @param exec - executor seam.
+ * @param cwd - any directory inside the repository.
+ * @param authArgs - credential argv for the host.
+ * @returns the URL, or undefined when the repository has no remote at all.
+ */
+async function probeEndpoint(exec: Exec, cwd: string, authArgs: readonly string[]): Promise<string | undefined> {
+  const target = await resolvePushTarget(exec, cwd, authArgs)
+  if (target?.url !== undefined && target.url !== '') return target.url
+  const remotes = await listRemotes(exec, cwd)
+  const chosen = remotes.find(remote => remote.name === 'origin') ?? remotes[0]
+  if (chosen === undefined) return undefined
+  const url = chosen.pushUrl !== '' ? chosen.pushUrl : chosen.fetchUrl
+  return url === '' ? undefined : url
 }

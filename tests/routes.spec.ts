@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Exec, ExecResult } from '../src/git.ts'
 import { WORKTREE_EXCLUDE_RULE } from '../src/git.ts'
 import {
-  handleCreateBranch, handleCreateWorktree, handleDeleteBranch, handleEnsureDirectory, handleFetch, handleGroupWorktrees, handleInspectWorktree, handlePathExists, handlePurgeDirectory, handleRemoveWorktree, handleRenameBranch, handleStatus, handleSwitch, handleUpdate, handleWorktreesAll,
+  handleCreateBranch, handleCreateWorktree, handleDeleteBranch, handleEnsureDirectory, handleFetch, handleGroupWorktrees, handleInspectWorktree, handlePathExists, handlePurgeDirectory, handleRemoveWorktree, handleRenameBranch, handleNetworkProbe, handleStatus, handleSwitch, handleUpdate, handleWorktreesAll,
   type RouteDeps,
 } from '../src/routes.ts'
 import { stat } from 'node:fs/promises'
@@ -1352,5 +1352,66 @@ describe('handlePurgeDirectory', () => {
     expect(outcome.status).toBe(500)
     if (!('error' in outcome.body)) throw new Error('expected an error body')
     expect(outcome.body.error).toContain('EBUSY')
+  })
+})
+
+describe('handleNetworkProbe', () => {
+  const PROXY_ARGV = ['-c', 'http.proxy=http://127.0.0.1:7890']
+  const PIN = ['-c', 'http.curloptResolve=github.com:443:140.82.114.3']
+
+  it('reports every channel against the push URL, failures included', async () => {
+    const exec = scripted({
+      ...REPO_CALLS,
+      'rev-parse --abbrev-ref --symbolic-full-name @{u}': { stdout: 'origin/main\n' },
+      'remote get-url --push origin': { stdout: 'https://github.com/o/r.git\n' },
+      'ls-remote --heads https://github.com/o/r.git': { code: 128, stderr: 'Connection was reset\n' },
+      '-c http.proxy=http://127.0.0.1:7890 ls-remote --heads https://github.com/o/r.git': { code: 128, stderr: 'Proxy CONNECT aborted\n' },
+      '-c http.curloptResolve=github.com:443:140.82.114.3 ls-remote --heads https://github.com/o/r.git': { stdout: 'abc\trefs/heads/main\n' },
+    })
+    const outcome = await handleNetworkProbe(deps({
+      exec,
+      networkChannels: () => [async () => PROXY_ARGV, async () => PIN],
+      sectionSystemProxy: async () => 'http://127.0.0.1:7890',
+    }), { repoPath: p('/repo') })
+    expect(outcome.status).toBe(200)
+    expect(outcome.body).toMatchObject({
+      url: 'https://github.com/o/r.git',
+      systemProxy: 'http://127.0.0.1:7890',
+      channels: [
+        { channel: 'direct', ok: false, detail: 'Connection was reset' },
+        { channel: 'proxy', ok: false, detail: 'Proxy CONNECT aborted' },
+        { channel: 'ip', ok: true },
+      ],
+    })
+  })
+
+  it('probes the first remote when the branch has no upstream', async () => {
+    const exec = scripted({
+      ...REPO_CALLS,
+      'rev-parse --abbrev-ref --symbolic-full-name @{u}': { code: 128 },
+      'remote -v': { stdout: 'origin\thttps://github.com/o/r.git (fetch)\norigin\thttps://github.com/o/r.git (push)\n' },
+      'ls-remote --heads https://github.com/o/r.git': { stdout: '' },
+    })
+    const outcome = await handleNetworkProbe(deps({ exec }), { repoPath: p('/repo') })
+    expect(outcome.status).toBe(200)
+    expect(outcome.body).toMatchObject({ url: 'https://github.com/o/r.git', channels: [{ channel: 'direct', ok: true }] })
+    expect(outcome.body).not.toHaveProperty('systemProxy')
+  })
+
+  it('refuses a repository without any remote', async () => {
+    const exec = scripted({
+      ...REPO_CALLS,
+      'rev-parse --abbrev-ref --symbolic-full-name @{u}': { code: 128 },
+      'remote -v': { stdout: '' },
+    })
+    const outcome = await handleNetworkProbe(deps({ exec }), { repoPath: p('/repo') })
+    expect(outcome.status).toBe(400)
+    expect(outcome.body).toEqual({ error: '"repoPath" has no remote to probe' })
+  })
+
+  it('rejects a directory outside any repository', async () => {
+    const exec = scripted({ 'rev-parse --show-toplevel': { code: 128 } })
+    const outcome = await handleNetworkProbe(deps({ exec }), { repoPath: p('/not-a-repo') })
+    expect(outcome.status).toBe(400)
   })
 })
