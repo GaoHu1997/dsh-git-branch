@@ -8,6 +8,7 @@ import { execFile } from 'node:child_process'
 import { existsSync, readdirSync } from 'node:fs'
 import { appendFile, mkdir, readFile, rm } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, normalize, resolve } from 'node:path'
+import { FETCH_TIMEOUT_MS, PROBE_TIMEOUT_MS, PUSH_TIMEOUT_MS, VERIFY_TIMEOUT_MS } from './network.js'
 import { accelerateUrlError, localBranchName, normalizeAccelerateUrl } from './normalize.js'
 import type { BranchEntry, RemoteEntry, WorktreeEntry, WorkspaceGitFacts } from './wire.js'
 
@@ -18,13 +19,15 @@ export interface ExecResult {
   stderr: string
   /** Node-level failure text when the process never produced stderr. */
   errorMessage?: string
+  /** True when the executor killed the process at its timeout budget. */
+  timedOut?: boolean
 }
 
 /**
  * Process executor seam. Runs `file args` with cwd set, captures output as
  * UTF-8 text, and never throws — a non-zero exit is a normal result.
  */
-export type Exec = (file: string, args: readonly string[], options: { cwd: string; timeoutMs?: number }) => Promise<ExecResult>
+export type Exec = (file: string, args: readonly string[], options: { cwd: string; timeoutMs?: number; env?: Record<string, string | undefined> }) => Promise<ExecResult>
 
 /** Failure of one git invocation: non-zero exit with the stderr text. */
 export class GitError extends Error {
@@ -32,6 +35,8 @@ export class GitError extends Error {
     readonly args: readonly string[],
     readonly code: number,
     readonly stderr: string,
+    /** True when the executor killed the command at its budget — no verdict. */
+    readonly timedOut = false,
   ) {
     super(`git ${args.join(' ')} failed (exit ${code}): ${stderr.trim()}`)
     this.name = 'GitError'
@@ -70,37 +75,49 @@ export interface RepoFacts {
 /** Default hard timeout for one git call: generous for every LOCAL
  * operation (status/log/commit/worktree) while still bounding hangs. */
 export const GIT_TIMEOUT_MS = 20_000
-/** Network operations (fetch/push) get a far wider budget: a slow link with
- * a real pack transfer outruns the local default, and a killed push may have
- * ALREADY updated the remote refs — an error toast for a push that actually
- * landed. 120s still bounds a hung credential prompt. */
-export const NETWORK_TIMEOUT_MS = 120_000
+/** Network budgets live in `network.ts` (probe/fetch/push/verify): a slow
+ * link with a real pack transfer outruns the local default, and a killed
+ * push may have ALREADY updated the remote refs — an error toast for a push
+ * that actually landed. */
 
 /** Real executor over node:child_process with a hard timeout. */
-export function childProcessExec(file: string, args: readonly string[], options: { cwd: string; timeoutMs?: number }): Promise<ExecResult> {
+export function childProcessExec(file: string, args: readonly string[], options: { cwd: string; timeoutMs?: number; env?: Record<string, string | undefined> }): Promise<ExecResult> {
   return new Promise((resolvePromise) => {
-    execFile(file, args, { cwd: options.cwd, encoding: 'utf8', timeout: options.timeoutMs ?? GIT_TIMEOUT_MS, windowsHide: true, maxBuffer: 4 * 1024 * 1024 }, (error, stdout, stderr) => {
+    execFile(file, args, {
+      cwd: options.cwd,
+      encoding: 'utf8',
+      timeout: options.timeoutMs ?? GIT_TIMEOUT_MS,
+      windowsHide: true,
+      maxBuffer: 4 * 1024 * 1024,
+      ...(options.env === undefined ? {} : { env: { ...process.env, ...options.env } }),
+    }, (error, stdout, stderr) => {
       const code = error === null ? 0 : typeof error.code === 'number' ? error.code : 1
+      // execFile sets `killed` when its own timeout fired; the exit code is a
+      // synthetic 1, so without this flag a timeout is indistinguishable from
+      // a genuine refusal and a push would be reported failed although the
+      // remote may have applied it.
+      const timedOut = error !== null && (error as { killed?: boolean }).killed === true
       resolvePromise({
         code,
         stdout: stdout ?? '',
         stderr: stderr ?? '',
         ...(error instanceof Error ? { errorMessage: error.message } : {}),
+        ...(timedOut ? { timedOut } : {}),
       })
     })
   })
 }
 
 /** Run one git command; a non-zero exit raises {@link GitError} with stderr. */
-async function git(exec: Exec, cwd: string, args: readonly string[], timeoutMs?: number): Promise<string> {
-  const result = await exec('git', args, { cwd, ...(timeoutMs === undefined ? {} : { timeoutMs }) })
+async function git(exec: Exec, cwd: string, args: readonly string[], timeoutMs?: number, env?: Record<string, string | undefined>): Promise<string> {
+  const result = await exec('git', args, { cwd, ...(timeoutMs === undefined ? {} : { timeoutMs }), ...(env === undefined ? {} : { env }) })
   if (result.code !== 0) {
     const diagnostic = result.stderr.trim() !== ''
       ? result.stderr
       : result.stdout.trim() !== ''
         ? result.stdout
         : result.errorMessage ?? 'git produced no diagnostic output'
-    throw new GitError(args, result.code, diagnostic)
+    throw new GitError(args, result.code, diagnostic, result.timedOut === true)
   }
   return result.stdout
 }
@@ -597,7 +614,7 @@ export function accelArgs(prefix: string | undefined): readonly string[] {
  * `credentials.ts`); prepended before the subcommand like the accel rewrite.
  */
 export async function fetchAll(exec: Exec, repoRoot: string, accelPrefix?: string, authArgs: readonly string[] = []): Promise<void> {
-  await git(exec, repoRoot, [...accelArgs(accelPrefix), ...authArgs, 'fetch', '--all', '--prune'], NETWORK_TIMEOUT_MS)
+  await git(exec, repoRoot, [...accelArgs(accelPrefix), ...authArgs, 'fetch', '--all', '--prune'], FETCH_TIMEOUT_MS)
 }
 
 /** Outcome of {@link updateBranch}: the branch touched and whether it moved. */
@@ -635,6 +652,75 @@ export async function updateBranch(exec: Exec, cwd: string, accelPrefix?: string
 export interface PushOutcome {
   branch: string
   pushed: boolean
+  /** Set when the push ran out of time but the remote ref already matches
+   * the local HEAD — the push landed, the connection just did not say so. */
+  note?: 'timed-out-but-landed'
+}
+
+/** The endpoint a write would use, resolved so it can be probed first. */
+export interface PushTarget {
+  /** Remote name taken from the upstream (`origin`). */
+  remote: string
+  /** The URL `git push` uses (a separate `pushurl` is respected); absent
+   * when git could not name one, in which case the remote name is the
+   * endpoint and the probe resolves it the same way push does. */
+  url?: string
+}
+
+/** Per-command routing for a network command (a proxy's `-c` pairs). */
+export interface NetworkOptions {
+  /** Argv placed before the subcommand that selects a network channel;
+   * empty/absent = the direct connection. */
+  channelArgs?: readonly string[]
+}
+
+/**
+ * Resolve where a write to `@{u}` would go, WITHOUT sending anything.
+ * `remote get-url --push` is the one source of truth for the endpoint: a
+ * remote may configure a separate `pushurl`, and probing the fetch URL
+ * would validate a host the push never talks to.
+ * @param exec - executor seam.
+ * @param cwd - directory whose checked-out branch supplies the upstream.
+ * @param authArgs - per-host credential argv (kept for symmetry; `rev-parse`
+ * and `remote` are local and never authenticate).
+ * @returns the remote (and its push URL when git names one), or undefined
+ * when the branch has no upstream — that case belongs to git's own message.
+ */
+export async function resolvePushTarget(exec: Exec, cwd: string, authArgs: readonly string[] = []): Promise<PushTarget | undefined> {
+  const upstream = (await gitMaybe(exec, cwd, [...authArgs, 'rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']))?.trim() ?? ''
+  const slash = upstream.indexOf('/')
+  if (slash <= 0) return undefined
+  const remote = upstream.slice(0, slash)
+  const url = (await gitMaybe(exec, cwd, ['remote', 'get-url', '--push', remote]))?.trim() ?? ''
+  return { remote, ...(url === '' ? {} : { url }) }
+}
+
+/**
+ * Reachability probe for a write: a READ of the push endpoint. A host that
+ * cannot answer `ls-remote` cannot receive a pack either, so failing here
+ * costs the probe budget (10s) instead of the push budget (600s), and the
+ * caller learns which endpoint was unreachable before any object moved.
+ * Terminal prompts are disabled for the probe: a probe must fail, never
+ * block on a credential dialog the user cannot see.
+ * @param exec - executor seam.
+ * @param cwd - any directory inside the repository.
+ * @param target - endpoint from {@link resolvePushTarget}.
+ * @param options - channel argv (proxy) to route the probe the same way.
+ * @param authArgs - per-host credential argv.
+ */
+export async function probePushTarget(exec: Exec, cwd: string, target: PushTarget, options: NetworkOptions = {}, authArgs: readonly string[] = []): Promise<void> {
+  await git(exec, cwd, [...(options.channelArgs ?? []), ...authArgs, 'ls-remote', '--heads', target.url ?? target.remote], PROBE_TIMEOUT_MS, { GIT_TERMINAL_PROMPT: '0' })
+}
+
+/**
+ * Read one remote ref through the same channel a write used. The single
+ * line answering `ls-remote --refs <endpoint> <ref>` is `<sha>\t<ref>`;
+ * anything else (no output, a diagnostic) answers undefined.
+ */
+async function remoteRefOf(exec: Exec, cwd: string, target: PushTarget, ref: string, options: NetworkOptions, authArgs: readonly string[]): Promise<string | undefined> {
+  const listed = await gitMaybe(exec, cwd, [...(options.channelArgs ?? []), ...authArgs, 'ls-remote', '--refs', target.url ?? target.remote, ref], VERIFY_TIMEOUT_MS)
+  const line = (listed ?? '').split('\n').map(item => item.trim()).find(item => item !== '')
+  return line?.split(/\s+/)[0]
 }
 
 /**
@@ -651,16 +737,39 @@ export interface PushOutcome {
  * pushed content to a third party.
  * @param exec - executor seam.
  * @param cwd - directory whose checked-out branch is pushed.
+ * @param authArgs - per-host credential argv.
+ * @param options - channel argv (proxy) applied to the probe and the push.
  * @returns the branch and whether the remote-tracking ref changed. A branch
  * without an upstream can still be handed to `git push`, so Git's own
  * push-specific diagnostic is preserved; in that case `pushed` is false.
  */
-export async function pushBranch(exec: Exec, cwd: string, authArgs: readonly string[] = []): Promise<PushOutcome> {
+export async function pushBranch(exec: Exec, cwd: string, authArgs: readonly string[] = [], options: NetworkOptions = {}): Promise<PushOutcome> {
   const before = await gitMaybe(exec, cwd, ['rev-parse', '@{u}'])
-  await git(exec, cwd, [...authArgs, 'push'], NETWORK_TIMEOUT_MS)
-  const after = await gitMaybe(exec, cwd, ['rev-parse', '@{u}'])
+  if (before === undefined) {
+    // No upstream: let git push speak (its message is the actionable one)
+    // and skip a probe that could only replace it with a reachability error.
+    await git(exec, cwd, [...(options.channelArgs ?? []), ...authArgs, 'push'], PUSH_TIMEOUT_MS)
+    const branch = (await gitMaybe(exec, cwd, ['branch', '--show-current']))?.trim() ?? ''
+    return { branch, pushed: false }
+  }
   const branch = (await gitMaybe(exec, cwd, ['branch', '--show-current']))?.trim() ?? ''
-  return { branch, pushed: before !== undefined && after !== undefined && before.trim() !== after.trim() }
+  const head = (await git(exec, cwd, ['rev-parse', 'HEAD'])).trim()
+  const target = await resolvePushTarget(exec, cwd, authArgs)
+  if (target !== undefined) await probePushTarget(exec, cwd, target, options, authArgs)
+  try {
+    await git(exec, cwd, [...(options.channelArgs ?? []), ...authArgs, 'push'], PUSH_TIMEOUT_MS)
+  } catch (error) {
+    // A killed push carries no verdict: the remote may have applied it before
+    // the socket died. One `ls-remote` settles it; anything else (a genuine
+    // refusal, a rejected pack) is reported as-is and never retried.
+    if (error instanceof GitError && error.timedOut && target !== undefined && branch !== '') {
+      const landed = await remoteRefOf(exec, cwd, target, `refs/heads/${branch}`, options, authArgs)
+      if (landed === head) return { branch, pushed: true, note: 'timed-out-but-landed' }
+    }
+    throw error
+  }
+  const after = await gitMaybe(exec, cwd, ['rev-parse', '@{u}'])
+  return { branch, pushed: after !== undefined && before.trim() !== after.trim() }
 }
 
 /** Every LOCAL tag name of the repository, in git's own sort order. */
@@ -703,6 +812,9 @@ export interface TagPushOutcome {
   tag: string
   remote: string
   pushed: boolean
+  /** Set when the push timed out but the remote tag already names the local
+   * object — landed, with the connection gone before it could say so. */
+  note?: 'timed-out-but-landed'
 }
 
 /**
@@ -729,15 +841,22 @@ export interface TagPushOutcome {
  * @param remote - the remote to publish to (see {@link resolvePushRemote}).
  * @returns the tag, the remote, and whether the push had to run.
  */
-export async function pushTag(exec: Exec, cwd: string, name: string, remote: string, authArgs: readonly string[] = []): Promise<TagPushOutcome> {
+export async function pushTag(exec: Exec, cwd: string, name: string, remote: string, authArgs: readonly string[] = [], options: NetworkOptions = {}): Promise<TagPushOutcome> {
   const ref = `refs/tags/${name}`
   const local = (await git(exec, cwd, ['rev-parse', '--verify', ref])).trim()
-  const listed = await gitMaybe(exec, cwd, [...authArgs, 'ls-remote', '--refs', remote, ref], NETWORK_TIMEOUT_MS)
-  const present = (listed ?? '').split('\n')
-    .map(line => line.trim().split(/\s+/)[0] ?? '')
-    .includes(local)
-  if (present) return { tag: name, remote, pushed: false }
-  await git(exec, cwd, [...authArgs, 'push', remote, `${ref}:${ref}`], NETWORK_TIMEOUT_MS)
+  // The existence check doubles as the reachability probe and as the
+  // verification a timed-out push needs: the same read decides all three.
+  const already = await remoteRefOf(exec, cwd, { remote }, ref, options, authArgs)
+  if (already === local) return { tag: name, remote, pushed: false }
+  try {
+    await git(exec, cwd, [...(options.channelArgs ?? []), ...authArgs, 'push', remote, `${ref}:${ref}`], PUSH_TIMEOUT_MS)
+  } catch (error) {
+    if (error instanceof GitError && error.timedOut) {
+      const landed = await remoteRefOf(exec, cwd, { remote }, ref, options, authArgs)
+      if (landed === local) return { tag: name, remote, pushed: true, note: 'timed-out-but-landed' }
+    }
+    throw error
+  }
   return { tag: name, remote, pushed: true }
 }
 

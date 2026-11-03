@@ -10,6 +10,7 @@ import { credentialHostIssue, credentialSecretIssue, credentialUsernameIssue, cr
 import type { CredentialService } from './credential-service.js'
 import { importLocalCredentials as runLocalImport, type LocalImportReport } from './local-import.js'
 import { appendWorktreeExclude, fsExcludeSeams, GitError, addRemote, addWorktree, addWorktreeCutout, collectAiDiff, commitFiles, commitIndex, createBranch, createTag, cutoutBranchName, deleteBranch, fetchAll, fsDirExists, inspectWorktree, isAbsoluteDir, isStageablePath, listRemotes, listTagNames, logHistory, probeRepo, probeWorkspaceGit, pushTag, removeRemote, removeWorktree, renameBranch, resolveBranch, resolvePushRemote, pushBranch, setRemoteUrl, stagePaths, switchBranch, updateBranch, workingChanges, type DirExists, type ExcludeSeams, type Exec } from './git.js'
+import { classifyGitFailure, withHint } from './network.js'
 import { ACCEL_DEFAULT_URL, accelerateUrlError, isAbsoluteConfigPath, normalizeAccelerateUrl, remoteNameIssue, remoteUrlIssue, sanitizeBranchDir, type RemoteNameIssue, type RemoteUrlIssue } from './normalize.js'
 import { deviceFlowClientId, isDeviceFlowHost, pollDeviceFlow, startDeviceFlow, type DeviceFlowPoll } from './oauth.js'
 import { resolveRootDir } from './settings.js'
@@ -371,6 +372,10 @@ export async function handlePurgeDirectory(deps: RouteDeps, body: unknown): Prom
 
 /** GitError to outcome: usage-shaped failures are 400, the rest 500. */
 function gitFailure(error: GitError): RouteOutcome {
+  // Every git failure the routes surface passes through one classifier so
+  // the toast explains WHAT broke (host, credentials, divergence) instead of
+  // repeating git's raw text alone.
+  const failure = classifyGitFailure(error.stderr, { timedOut: error.timedOut })
   const usage = error.stderr.includes('usage:')
     || error.stderr.includes('fatal: invalid')
     // A user-typed branch name git refuses (`'bad..name' is not a valid
@@ -405,7 +410,7 @@ function gitFailure(error: GitError): RouteOutcome {
     // (a stale sidebar row racing a terminal-side removal).
     || error.stderr.includes('cannot remove the main worktree')
     || error.stderr.includes('is not a registered worktree')
-  return fail(usage ? 400 : 500, error.message)
+  return fail(usage ? 400 : 500, withHint(error.message, failure))
 }
 
 /**
@@ -783,7 +788,7 @@ export async function handlePush(deps: RouteDeps, body: unknown): Promise<RouteO
     // The session's OWN worktree, not the main checkout: in a linked-worktree
     // session "push current branch" means the branch that worktree holds.
     const outcome = await pushBranch(deps.exec, facts.toplevel, await authArgsFor(deps))
-    const result: PushResult = { branch: outcome.branch, pushed: outcome.pushed }
+    const result: PushResult = { branch: outcome.branch, pushed: outcome.pushed, ...(outcome.note === undefined ? {} : { note: outcome.note }) }
     return { status: 200, body: result }
   } catch (error) {
     if (error instanceof GitError) return gitFailure(error)
@@ -1172,7 +1177,7 @@ export async function handlePushTag(deps: RouteDeps, body: unknown): Promise<Rou
     const choice = await resolvePushRemote(deps.exec, facts.toplevel)
     if (!choice.ok) return fail(400, choice.message)
     const result = await pushTag(deps.exec, facts.toplevel, name, choice.remote, await authArgsFor(deps))
-    const body: PushTagResult = result
+    const body: PushTagResult = { ...result, ...(result.note === undefined ? {} : { note: result.note }) }
     return { status: 200, body }
   } catch (error) {
     if (error instanceof GitError) return gitFailure(error)

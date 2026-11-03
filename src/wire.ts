@@ -323,6 +323,9 @@ export interface PushResult {
   branch: string
   /** False when the upstream already contained the branch (nothing moved). */
   pushed: boolean
+  /** Set when the push timed out but the remote ref already matched HEAD:
+   * the push landed and only the confirmation was lost. */
+  note?: 'timed-out-but-landed'
 }
 
 /** Error envelope every non-2xx response carries. */
@@ -631,6 +634,9 @@ export interface PushTagResult {
   /** False when the remote already carried this exact tag object — nothing
    * was sent. True once the push command actually ran. */
   pushed: boolean
+  /** Set when the push timed out but the remote tag already named the local
+   * object: the tag landed and only the confirmation was lost. */
+  note?: 'timed-out-but-landed'
 }
 
 /** One file row of POST commit-files. */
