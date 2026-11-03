@@ -121,6 +121,7 @@ export function GitWorktreeCard(props: GitWorktreeCardProps) {
     || accelState.saving
     || !state.keepWorktreesValid
     || accelState.urlError !== null
+    || accelState.proxyError !== null
   const legacyRootText = storage?.legacyRoot ?? (state.rootDir === '' ? '—' : state.rootDir)
 
   return (
@@ -250,6 +251,22 @@ export function GitWorktreeCard(props: GitWorktreeCardProps) {
               {accelState.urlError === 'empty' ? t('accel.urlEmpty') : t('accel.urlInvalid')}
             </span>
           )
+          : null}
+      </label>
+      <label className={`${css.field} ${css.copyFilesRow}`} htmlFor="git-worktree-card-network-proxy">
+        <span className={css.fieldLabel}>{t('accel.proxyLabel')}</span>
+        <input
+          id="git-worktree-card-network-proxy"
+          className={css.accelInput}
+          type="text"
+          spellCheck={false}
+          placeholder="http://127.0.0.1:7890"
+          disabled={lockInput || accelState.saving}
+          value={accelState.proxyText}
+          onChange={event => { props.editNetworkProxy(event.target.value) }}
+        />
+        {accelState.proxyError !== null
+          ? <span className={css.keepBad} role="alert">{t('accel.proxyInvalid')}</span>
           : null}
       </label>
       {/* The auto-prune's audit trail (browser-local, newest first):

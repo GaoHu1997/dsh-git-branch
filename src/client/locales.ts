@@ -220,6 +220,13 @@ export type GitWorktreeKey =
   | 'accel.restoreDefault'
   | 'accel.urlInvalid'
   | 'accel.urlEmpty'
+  | 'accel.proxyLabel'
+  | 'accel.proxyInvalid'
+  | 'accel.probe'
+  | 'accel.probing'
+  | 'accel.channel.direct'
+  | 'accel.channel.proxy'
+  | 'accel.channel.ip'
   | 'accel.saveFailed'
   | 'accel.savedOn'
   | 'accel.savedOff'
@@ -510,6 +517,13 @@ export const en: Record<GitWorktreeKey, string> = {
   'accel.restoreDefault': 'Restore default',
   'accel.urlInvalid': 'Enter an http(s):// URL',
   'accel.urlEmpty': 'Enter an acceleration URL',
+  'accel.proxyLabel': 'Proxy (optional)',
+  'accel.proxyInvalid': 'Enter an http(s)/socks5 proxy URL as host:port, without credentials',
+  'accel.probe': 'Test network',
+  'accel.probing': 'Testing...',
+  'accel.channel.direct': 'Direct',
+  'accel.channel.proxy': 'Proxy',
+  'accel.channel.ip': 'Pinned IP',
   'accel.saveFailed': 'The change did not save. Try again.',
   'accel.savedOn': 'China acceleration enabled: {url}',
   'accel.savedOff': 'China acceleration disabled',
@@ -801,6 +815,13 @@ export const zh: Record<GitWorktreeKey, string> = {
   'accel.restoreDefault': '恢复默认',
   'accel.urlInvalid': '请输入以 http(s):// 开头的地址',
   'accel.urlEmpty': '请输入加速地址',
+  'accel.proxyLabel': '代理（可选）',
+  'accel.proxyInvalid': '请输入 主机:端口 形式的 http(s)/socks5 代理地址，且不带账号密码',
+  'accel.probe': '检测网络',
+  'accel.probing': '检测中...',
+  'accel.channel.direct': '直连',
+  'accel.channel.proxy': '代理',
+  'accel.channel.ip': '固定 IP',
   'accel.saveFailed': '保存未生效，请重试。',
   'accel.savedOn': '已启用国内加速：{url}',
   'accel.savedOff': '已关闭国内加速',

@@ -44,6 +44,8 @@ export interface SectionValue {
   cnAccelerate?: boolean
   /** cn-accelerate mirror prefix; absent = the shipped default. */
   cnAccelerateUrl?: string
+  /** Explicit proxy for the network channels; absent/blank = no proxy. */
+  networkProxy?: string
 }
 
 /**

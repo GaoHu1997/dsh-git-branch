@@ -5,9 +5,9 @@
  */
 
 import type {
-  AiCommitMessageBody, AiCommitMessageResult, ChangesResult, CommitFilesResult, CommitResult, CreateBranchResult, CreateTagResult, CreateWorktreeResult, CredentialDeleteBody, CredentialImportBody, CredentialImportResult, CredentialOAuthPollBody, CredentialOAuthPollResult, CredentialOAuthStartBody, CredentialOAuthStartResult, CredentialSaveBody, CredentialsResult, DeleteBranchResult, EnsureDirectoryResult, FetchResult, GroupWorkspacesResult, InspectWorktreeResult, LogResult, PathExistsResult, PurgeDirectoryResult, PushTagResult, RemoteMutationBody, RemoveWorktreeResult, RemotesResult, RenameBranchResult, RepoStatus, RouteError, StageBody, StageResult, SwitchResult, UpdateResult, PushResult, WorktreesAllResult,
+  AiCommitMessageBody, AiCommitMessageResult, ChangesResult, CommitFilesResult, CommitResult, CreateBranchResult, CreateTagResult, CreateWorktreeResult, CredentialDeleteBody, CredentialImportBody, CredentialImportResult, CredentialOAuthPollBody, CredentialOAuthPollResult, CredentialOAuthStartBody, CredentialOAuthStartResult, CredentialSaveBody, CredentialsResult, DeleteBranchResult, EnsureDirectoryResult, FetchResult, GroupWorkspacesResult, InspectWorktreeResult, LogResult, PathExistsResult, PurgeDirectoryResult, NetworkProbeResult, PushTagResult, RemoteMutationBody, RemoveWorktreeResult, RemotesResult, RenameBranchResult, RepoStatus, RouteError, StageBody, StageResult, SwitchResult, UpdateResult, PushResult, WorktreesAllResult,
 } from '../wire.ts'
-import { ROUTE_AI_COMMIT_MESSAGE, ROUTE_BRANCH, ROUTE_BRANCH_DELETE, ROUTE_BRANCH_RENAME, ROUTE_CHANGES, ROUTE_COMMIT, ROUTE_COMMIT_FILES, ROUTE_CREDENTIALS, ROUTE_CREDENTIALS_DELETE, ROUTE_CREDENTIALS_IMPORT, ROUTE_CREDENTIALS_OAUTH_POLL, ROUTE_CREDENTIALS_OAUTH_START, ROUTE_CREDENTIALS_SAVE, ROUTE_ENSURE_DIRECTORY, ROUTE_EXISTS, ROUTE_FETCH, ROUTE_GROUP, ROUTE_INSPECT, ROUTE_LOG, ROUTE_PUSH, ROUTE_PURGE, ROUTE_REMOTE, ROUTE_REMOTES, ROUTE_REMOVE, ROUTE_STAGE, ROUTE_STATUS, ROUTE_SWITCH, ROUTE_TAG, ROUTE_TAG_PUSH, ROUTE_UPDATE, ROUTE_WORKTREE, ROUTE_WORKTREES_ALL } from '../wire.ts'
+import { ROUTE_AI_COMMIT_MESSAGE, ROUTE_NETWORK_PROBE, ROUTE_BRANCH, ROUTE_BRANCH_DELETE, ROUTE_BRANCH_RENAME, ROUTE_CHANGES, ROUTE_COMMIT, ROUTE_COMMIT_FILES, ROUTE_CREDENTIALS, ROUTE_CREDENTIALS_DELETE, ROUTE_CREDENTIALS_IMPORT, ROUTE_CREDENTIALS_OAUTH_POLL, ROUTE_CREDENTIALS_OAUTH_START, ROUTE_CREDENTIALS_SAVE, ROUTE_ENSURE_DIRECTORY, ROUTE_EXISTS, ROUTE_FETCH, ROUTE_GROUP, ROUTE_INSPECT, ROUTE_LOG, ROUTE_PUSH, ROUTE_PURGE, ROUTE_REMOTE, ROUTE_REMOTES, ROUTE_REMOVE, ROUTE_STAGE, ROUTE_STATUS, ROUTE_SWITCH, ROUTE_TAG, ROUTE_TAG_PUSH, ROUTE_UPDATE, ROUTE_WORKTREE, ROUTE_WORKTREES_ALL } from '../wire.ts'
 
 /** One route call outcome: the parsed body, or the error envelope text. */
 type Call<T> = (T & { ok: true }) | { ok: false; error: string }
@@ -55,6 +55,16 @@ export async function fetchStatus(path: string): Promise<Call<RepoStatus>> {
   } catch (cause) {
     return { ok: false, error: cause instanceof Error ? cause.message : String(cause) }
   }
+}
+
+/**
+ * Probe every network channel (direct, proxy, pinned IP) against the
+ * repository's push URL; failures come back per channel rather than as one
+ * error, so the popover can show which route works right now (0043).
+ * @param repoPath - absolute directory inside the repository.
+ */
+export function requestNetworkProbe(repoPath: string): Promise<Call<NetworkProbeResult>> {
+  return post<NetworkProbeResult>(ROUTE_NETWORK_PROBE, { repoPath })
 }
 
 /**

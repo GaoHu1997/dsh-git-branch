@@ -12,44 +12,15 @@
  */
 import type { Exec } from './git.js'
 
-/** Schemes git's libcurl accepts for an HTTP(S) remote. */
-const PROXY_SCHEMES: readonly string[] = ['http', 'https', 'socks5', 'socks5h']
+import { proxyUrlError } from './normalize.js'
 
 /** A registry read is local and cheap; it must not become the slowest step. */
 export const SYSTEM_PROXY_TIMEOUT_MS = 3_000
 
 const INTERNET_SETTINGS = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings'
 
-/**
- * Why this proxy value cannot be used, or undefined when it can.
- *
- * Credentials are rejected on purpose: the value is stored in the plugin
- * config and passed as one `-c` argument, so `user:pass@` would be readable in
- * the settings UI and in any diagnostics. A proxy that needs auth is out of
- * scope for v1 (0043).
- * @param value - candidate proxy URL.
- */
-export function proxyUrlError(value: string): string | undefined {
-  let url: URL
-  try {
-    url = new URL(value)
-  } catch {
-    return 'must be an absolute proxy URL such as http://127.0.0.1:7890'
-  }
-  if (!PROXY_SCHEMES.includes(url.protocol.replace(':', ''))) {
-    return `scheme must be one of ${PROXY_SCHEMES.join(', ')}`
-  }
-  if (url.hostname === '') return 'must name a proxy host'
-  if (url.port === '' ) return 'must name a proxy port'
-  const port = Number(url.port)
-  if (!Number.isInteger(port) || port < 1 || port > 65_535) return 'proxy port must be 1-65535'
-  if (url.username !== '' || url.password !== '') return 'credentials in the proxy URL are not supported'
-  if ((url.pathname !== '' && url.pathname !== '/') || url.search !== '' || url.hash !== '') {
-    return 'must not carry a path, query, or fragment'
-  }
-  return undefined
-}
-
+/** Re-exported so host callers keep one import site for the proxy rules. */
+export { proxyUrlError }
 /** The argv that routes one command through the proxy; `-c` precedes the subcommand. */
 export function proxyArgs(url: string): readonly string[] {
   return ['-c', `http.proxy=${url}`]

@@ -13,8 +13,10 @@
  * @module git-worktree/client/panel/CnAcceleratePopover
  */
 
-import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { requestNetworkProbe } from '../api.ts'
 import type { AccelFace } from '../accel-form.ts'
+import type { NetworkChannelId, NetworkProbeResult } from '../../wire.ts'
 import type { GitPanelTranslator } from '../panel-types.ts'
 import css from '../GitHistoryPanel.module.css'
 
@@ -24,11 +26,23 @@ export interface CnAcceleratePopoverProps {
   accel: AccelFace
   t: GitPanelTranslator
   pushToast: (text: string, tone: 'success' | 'error') => void
+  /** Repository directory the probe runs against; undefined disables probing. */
+  cwd: string | undefined
   onClose: () => void
 }
 
+/** Channel id → its display name; the probe rows stay in host order. */
+const CHANNEL_LABELS: Record<NetworkChannelId, (t: GitPanelTranslator) => string> = {
+  direct: t => t('accel.channel.direct'),
+  proxy: t => t('accel.channel.proxy'),
+  ip: t => t('accel.channel.ip'),
+}
+
 export function CnAcceleratePopover(props: CnAcceleratePopoverProps): JSX.Element {
-  const { accel, t, pushToast, onClose } = props
+  const { accel, t, pushToast, cwd, onClose } = props
+  const [probe, setProbe] = useState<NetworkProbeResult | null>(null)
+  const [probing, setProbing] = useState(false)
+  const [probeError, setProbeError] = useState<string | null>(null)
   const rootRef = useRef<HTMLDivElement | null>(null)
   const state = useSyncExternalStore(accel.store.subscribe, accel.store.getSnapshot)
 
@@ -51,7 +65,7 @@ export function CnAcceleratePopover(props: CnAcceleratePopoverProps): JSX.Elemen
 
   const locked = state.saving || !state.writable
   const onSave = useCallback(() => {
-    if (state.saving || state.urlError !== null || !state.writable) return
+    if (state.saving || state.urlError !== null || state.proxyError !== null || !state.writable) return
     void (async () => {
       await accel.saveAccel()
       const after = accel.store.getSnapshot()
@@ -63,6 +77,28 @@ export function CnAcceleratePopover(props: CnAcceleratePopoverProps): JSX.Elemen
       onClose()
     })()
   }, [accel, onClose, pushToast, state.saving, state.urlError, state.writable, t])
+
+  // Probe is a READ-ONLY diagnostic: it never saves, and a dead endpoint is
+  // reported per channel instead of as one toast (0043).
+  const onProbe = useCallback(() => {
+    if (cwd === undefined || probing) return
+    setProbing(true)
+    setProbeError(null)
+    void (async () => {
+      const result = await requestNetworkProbe(cwd)
+      setProbing(false)
+      if (!result.ok) {
+        setProbe(null)
+        setProbeError(result.error)
+        return
+      }
+      setProbe({
+        url: result.url,
+        channels: result.channels,
+        ...(result.systemProxy === undefined ? {} : { systemProxy: result.systemProxy }),
+      })
+    })()
+  }, [cwd, probing])
 
   return (
     <div className={css.cnPop} ref={rootRef} role="dialog" aria-label={t('panel.cnAccelerate')}>
@@ -104,12 +140,51 @@ export function CnAcceleratePopover(props: CnAcceleratePopoverProps): JSX.Elemen
       {state.urlError !== null
         ? <div className={css.cnError}>{state.urlError === 'empty' ? t('accel.urlEmpty') : t('accel.urlInvalid')}</div>
         : null}
+      <div className={css.cnFieldHead}>
+        <span className={css.cnFieldLabel}>{t('accel.proxyLabel')}</span>
+        <button
+          type="button"
+          className={css.cnLink}
+          disabled={locked || cwd === undefined || probing}
+          onClick={onProbe}
+        >
+          {probing ? t('accel.probing') : t('accel.probe')}
+        </button>
+      </div>
+      <input
+        type="text"
+        className={state.proxyError !== null ? css.cnInputBad : css.cnInput}
+        value={state.proxyText}
+        spellCheck={false}
+        disabled={locked}
+        placeholder="http://127.0.0.1:7890"
+        aria-invalid={state.proxyError !== null}
+        onChange={event => accel.editNetworkProxy(event.target.value)}
+      />
+      {state.proxyError !== null
+        ? <div className={css.cnError}>{t('accel.proxyInvalid')}</div>
+        : null}
+      {probe !== null
+        ? (
+          <div className={css.cnHint}>
+            {probe.channels.map(channel => (
+              <div key={channel.channel}>
+                {channel.ok ? '\u2713 ' : '\u2717 '}
+                {CHANNEL_LABELS[channel.channel](t)}
+                {` \u00b7 ${String(channel.elapsedMs)} ms`}
+                {channel.detail === undefined ? null : ` \u00b7 ${channel.detail}`}
+              </div>
+            ))}
+          </div>
+        )
+        : null}
+      {probeError !== null ? <div className={css.cnError}>{probeError}</div> : null}
       <div className={css.cnFooter}>
         <button type="button" className={css.cnGhost} onClick={onClose}>{t('cancel')}</button>
         <button
           type="button"
           className={css.cnSave}
-          disabled={state.saving || state.urlError !== null || !state.writable}
+          disabled={state.saving || state.urlError !== null || state.proxyError !== null || !state.writable}
           onClick={onSave}
         >
           {t('cardSave')}

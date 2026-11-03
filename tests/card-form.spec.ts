@@ -408,3 +408,55 @@ describe('AccelForm save', () => {
     expect(store.getSnapshot().failed).toBe(false)
   })
 })
+
+describe('AccelForm proxy field', () => {
+  it('projects no proxy by default and a stored proxy over it', () => {
+    const blank = new AccelForm(new FakeScope({}))
+    expect(blank.bind().getSnapshot()).toMatchObject({ proxyText: '', proxyError: null, dirty: false })
+    const stored = new AccelForm(new FakeScope({ networkProxy: 'http://127.0.0.1:7890' }))
+    expect(stored.bind().getSnapshot()).toMatchObject({ proxyText: 'http://127.0.0.1:7890', proxyError: null })
+  })
+
+  it('reports an unusable proxy as it is typed', () => {
+    const form = new AccelForm(new FakeScope({}))
+    form.actions().editNetworkProxy('127.0.0.1:7890')
+    expect(form.bind().getSnapshot().proxyError).not.toBeNull()
+    form.actions().editNetworkProxy('http://127.0.0.1:7890')
+    expect(form.bind().getSnapshot().proxyError).toBeNull()
+  })
+
+  it('stages the proxy without writing, and discard drops it', () => {
+    const scope = new FakeScope({ networkProxy: 'http://127.0.0.1:7890' })
+    const form = new AccelForm(scope)
+    form.actions().editNetworkProxy('socks5://127.0.0.1:1080')
+    expect(form.bind().getSnapshot()).toMatchObject({ proxyText: 'socks5://127.0.0.1:1080', dirty: true })
+    expect(scope.writes).toEqual([])
+    form.actions().discardAccel()
+    expect(form.bind().getSnapshot()).toMatchObject({ proxyText: 'http://127.0.0.1:7890', dirty: false })
+  })
+
+  it('writes a staged proxy with the pair, trimmed, and clears it on landing', async () => {
+    const scope = new FakeScope({})
+    const form = new AccelForm(scope)
+    form.actions().setAccelEnabled(true)
+    form.actions().editNetworkProxy('  http://127.0.0.1:7890  ')
+    await form.actions().saveAccel()
+    expect(scope.writes).toEqual([
+      { op: 'set', field: 'cnAccelerate', value: true },
+      { op: 'set', field: 'cnAccelerateUrl', value: ACCEL_DEFAULT_URL },
+      { op: 'set', field: 'networkProxy', value: 'http://127.0.0.1:7890' },
+    ])
+    expect(form.bind().getSnapshot()).toMatchObject({ proxyText: 'http://127.0.0.1:7890', dirty: false })
+  })
+
+  it('refuses to save an unusable proxy draft', async () => {
+    const scope = new FakeScope({})
+    const form = new AccelForm(scope)
+    form.actions().setAccelEnabled(true)
+    form.actions().editNetworkProxy('user:secret@127.0.0.1:7890')
+    await form.actions().saveAccel()
+    expect(scope.writes).toEqual([])
+    expect(form.bind().getSnapshot()).toMatchObject({ dirty: true, failed: false })
+    expect(form.bind().getSnapshot().proxyError).not.toBeNull()
+  })
+})
