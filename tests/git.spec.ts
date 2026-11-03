@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { join, normalize, resolve } from 'node:path'
 import {
-  accelArgs, addWorktree, addWorktreeCutout, appendWorktreeExclude, createBranch, cutoutBranchName, deleteBranch, fetchAll, inspectWorktree, listTagNames, probeRepo, probeWorkspaceGit, pushBranch, pushTag, removeWorktree, renameBranch, resolvePushRemote, switchBranch, updateBranch, WORKTREE_EXCLUDE_RULE,
+  accelArgs, addWorktree, addWorktreeCutout, appendWorktreeExclude, createBranch, cutoutBranchName, deleteBranch, fetchAll, inspectWorktree, isSshEndpoint, listTagNames, probeRepo, probeWorkspaceGit, pushBranch, pushTag, removeWorktree, renameBranch, resolvePushRemote, switchBranch, updateBranch, WORKTREE_EXCLUDE_RULE,
   type ExcludeSeams, type Exec, type ExecResult,
 } from '../src/git.ts'
 import { FETCH_TIMEOUT_MS, PROBE_TIMEOUT_MS, PUSH_TIMEOUT_MS } from '../src/network.ts'
@@ -424,6 +424,27 @@ describe('fetchAll', () => {
         out: { code: 128, stderr: 'fatal: unable to access \'https://example.com/repo.git\': Could not resolve host\n' } },
     ])
     await expect(fetchAll(exec, '/repo')).rejects.toThrow('Could not resolve host')
+  })
+
+  it('falls back to the direct URL when the mirror refuses the fetch', async () => {
+    // A mirror answers 401 for a private repo and 5xx on a bad day; neither
+    // is a verdict on the repository, so the read retries without the rewrite.
+    const exec = scripted([
+      { args: ['-c', 'url.https://gh-proxy.com/.insteadOf=https://github.com/', 'fetch', '--all', '--prune'],
+        out: { code: 128, stderr: "fatal: could not read Username for 'https://gh-proxy.com': terminal prompts disabled\n" } },
+      { args: ['fetch', '--all', '--prune'], out: { stdout: '' } },
+    ])
+    await expect(fetchAll(exec, '/repo', 'https://gh-proxy.com')).resolves.toBeUndefined()
+  })
+
+  it('reports the direct failure once both the mirror and the direct URL fail', async () => {
+    const exec = scripted([
+      { args: ['-c', 'url.https://gh-proxy.com/.insteadOf=https://github.com/', 'fetch', '--all', '--prune'],
+        out: { code: 128, stderr: 'fatal: unable to access: Recv failure: Connection was reset\n' } },
+      { args: ['fetch', '--all', '--prune'],
+        out: { code: 128, stderr: 'fatal: unable to access: Could not resolve host: github.com\n' } },
+    ])
+    await expect(fetchAll(exec, '/repo', 'https://gh-proxy.com')).rejects.toThrow('Could not resolve host')
   })
 })
 
@@ -1064,5 +1085,41 @@ describe('network channel fallback', () => {
     ])
     await expect(fetchAll(exec, '/repo', undefined, [], { fallbackChannels: [async () => PIN] }))
       .rejects.toThrow('terminal prompts disabled')
+  })
+
+  it('explains an SSH remote instead of probing channels that cannot apply', async () => {
+    const exec = scripted([
+      { args: ['fetch', '--all', '--prune'], out: { code: 128, stderr: 'fatal: unable to access: Could not resolve host: github.com\n' } },
+      { args: ['remote'], out: { stdout: 'origin\n' } },
+      { args: ['remote', 'get-url', 'origin'], out: { stdout: 'git@github.com:o/r.git\n' } },
+    ])
+    await expect(fetchAll(exec, '/repo', undefined, [], { fallbackChannels: [async () => PIN] }))
+      .rejects.toThrow('SSH remote')
+  })
+  it('names the SSH remote on a failed push probe instead of switching channels', async () => {
+    const exec = scripted([
+      { args: ['rev-parse', '@{u}'], out: { stdout: 'abc\n' } },
+      { args: ['branch', '--show-current'], out: { stdout: 'main\n' } },
+      { args: ['rev-parse', 'HEAD'], out: { stdout: 'abc\n' } },
+      { args: ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], out: { stdout: 'origin/main\n' } },
+      { args: ['remote', 'get-url', '--push', 'origin'], out: { stdout: 'git@github.com:o/r.git\n' } },
+      { args: ['ls-remote', '--heads', 'git@github.com:o/r.git'],
+        out: { code: 128, stderr: 'fatal: Could not read from remote repository.\n' } },
+    ])
+    await expect(pushBranch(exec, '/repo', [], { fallbackChannels: [async () => PIN] }))
+      .rejects.toThrow('SSH remote')
+  })
+})
+
+describe('isSshEndpoint', () => {
+  it('recognizes ssh:// and scp-style remotes', () => {
+    expect(isSshEndpoint('ssh://git@github.com/o/r.git')).toBe(true)
+    expect(isSshEndpoint('git@github.com:o/r.git')).toBe(true)
+    expect(isSshEndpoint('github.com:o/r.git')).toBe(false)
+  })
+
+  it('leaves https remotes and undefined alone', () => {
+    expect(isSshEndpoint('https://github.com/o/r.git')).toBe(false)
+    expect(isSshEndpoint(undefined)).toBe(false)
   })
 })
