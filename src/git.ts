@@ -597,7 +597,11 @@ export async function deleteBranch(exec: Exec, repoRoot: string, name: string): 
  */
 export function accelArgs(prefix: string | undefined): readonly string[] {
   if (prefix === undefined || accelerateUrlError(prefix) !== undefined) return []
-  return ['-c', `url.${normalizeAccelerateUrl(prefix)}.insteadOf=https://github.com/`]
+  const normalized = normalizeAccelerateUrl(prefix)
+  // The setting is a proxy prefix, not a replacement for github.com. Also
+  // accept a prefix that already includes the complete GitHub base URL.
+  const base = normalized.endsWith('/https://github.com/') ? normalized : `${normalized}https://github.com/`
+  return ['-c', `url.${base}.insteadOf=https://github.com/`]
 }
 
 /**

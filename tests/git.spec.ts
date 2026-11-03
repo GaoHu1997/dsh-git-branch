@@ -363,13 +363,21 @@ describe('deleteBranch', () => {
 
 describe('accelArgs', () => {
   const REWRITE = '-c'
-  const REWRITE_VALUE = 'url.https://gh-proxy.com/.insteadOf=https://github.com/'
+  const REWRITE_VALUE = 'url.https://gh-proxy.com/https://github.com/.insteadOf=https://github.com/'
 
   it('emits the per-command rewrite with a normalized prefix', () => {
     expect(accelArgs('https://gh-proxy.com/')).toEqual([REWRITE, REWRITE_VALUE])
     // The prefix arrives un-normalized and gains the trailing slash.
     expect(accelArgs('https://gh-proxy.com')).toEqual([REWRITE, REWRITE_VALUE])
-    expect(accelArgs('  https://mirror.example/prefix  ')).toEqual([REWRITE, 'url.https://mirror.example/prefix/.insteadOf=https://github.com/'])
+    expect(accelArgs('  https://mirror.example/prefix  ')).toEqual([REWRITE, 'url.https://mirror.example/prefix/https://github.com/.insteadOf=https://github.com/'])
+  })
+
+  it('accepts the complete rewrite base without duplicating github.com', () => {
+    expect(accelArgs('https://gh-proxy.com/https://github.com/')).toEqual([REWRITE, REWRITE_VALUE])
+    expect(accelArgs('https://gh-proxy.com/https://github.com')).toEqual([REWRITE, REWRITE_VALUE])
+    expect(accelArgs('https://git.tangbai.cc/')).toEqual([
+      REWRITE, 'url.https://git.tangbai.cc/https://github.com/.insteadOf=https://github.com/',
+    ])
   })
 
   it('stays empty without a prefix (the switch is off)', () => {
@@ -394,7 +402,7 @@ describe('fetchAll', () => {
 
   it('puts the mirror rewrite in front of the fetch when the prefix is set', async () => {
     const exec = scripted([
-      { args: ['-c', 'url.https://gh-proxy.com/.insteadOf=https://github.com/', 'fetch', '--all', '--prune'], out: {} },
+      { args: ['-c', 'url.https://gh-proxy.com/https://github.com/.insteadOf=https://github.com/', 'fetch', '--all', '--prune'], out: {} },
     ])
     await expect(fetchAll(exec, '/repo', 'https://gh-proxy.com')).resolves.toBeUndefined()
   })
@@ -444,7 +452,7 @@ describe('updateBranch', () => {
 
   it('carries the mirror rewrite into the fetch phase only, never the merge', async () => {
     const exec = scripted([
-      { args: ['-c', 'url.https://gh-proxy.com/.insteadOf=https://github.com/', 'fetch', '--all', '--prune'] },
+      { args: ['-c', 'url.https://gh-proxy.com/https://github.com/.insteadOf=https://github.com/', 'fetch', '--all', '--prune'] },
       { args: ['rev-parse', 'HEAD'], out: { stdout: 'aaa111\n' } },
       { args: ['merge', '--ff-only', '@{u}'], out: { stdout: 'Already up to date.\n' } },
       { args: ['rev-parse', 'HEAD'], out: { stdout: 'aaa111\n' } },
