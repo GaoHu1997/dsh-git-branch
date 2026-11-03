@@ -117,7 +117,7 @@ describe('gitNetworkTool', () => {
     expect(calls[0]?.file).toBe('git')
     expect(calls[0]?.args).toEqual(['push', 'origin', 'main'])
     expect(calls[0]?.cwd).toBe('/repo')
-    expect(calls[0]?.timeoutMs).toBe(120_000)
+    expect(calls[0]?.timeoutMs).toBe(300_000)
     expect(value).toMatchObject({
       repoPath: '/repo',
       subcommand: 'push',

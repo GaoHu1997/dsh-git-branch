@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { join, normalize, resolve } from 'node:path'
 import {
-  accelArgs, addWorktree, addWorktreeCutout, appendWorktreeExclude, createBranch, cutoutBranchName, deleteBranch, fetchAll, inspectWorktree, listTagNames, NETWORK_TIMEOUT_MS, probeRepo, probeWorkspaceGit, pushBranch, pushTag, removeWorktree, renameBranch, resolvePushRemote, switchBranch, updateBranch, WORKTREE_EXCLUDE_RULE,
+  accelArgs, addWorktree, addWorktreeCutout, appendWorktreeExclude, createBranch, cutoutBranchName, deleteBranch, fetchAll, inspectWorktree, listTagNames, probeRepo, probeWorkspaceGit, pushBranch, pushTag, removeWorktree, renameBranch, resolvePushRemote, switchBranch, updateBranch, WORKTREE_EXCLUDE_RULE,
   type ExcludeSeams, type Exec, type ExecResult,
 } from '../src/git.ts'
+import { FETCH_TIMEOUT_MS, PROBE_TIMEOUT_MS, PUSH_TIMEOUT_MS } from '../src/network.ts'
 
 /** Platform-correct expectation for a scripted POSIX-shaped path. */
 const p = (value: string): string => normalize(value)
@@ -480,34 +481,103 @@ describe('pushBranch', () => {
     await expect(pushBranch(exec, '/repo')).rejects.toThrow('fatal: current branch has no upstream branch')
   })
 
-  it('uses the process error when a failed command has no output', async () => {
+  it('resolves and probes the PUSH URL before any object moves', async () => {
+    const argvs: string[][] = []
+    const exec: Exec = async (_file, args) => {
+      argvs.push([...args])
+      if (args[0] === 'remote') return { code: 0, stdout: 'https://push.example/r.git\n', stderr: '' }
+      if (args[0] === 'branch') return { code: 0, stdout: 'main\n', stderr: '' }
+      if (args[0] === 'rev-parse' && args[1] === '--abbrev-ref') return { code: 0, stdout: 'origin/main\n', stderr: '' }
+      if (args[0] === 'rev-parse') return { code: 0, stdout: 'abc\n', stderr: '' }
+      return { code: 0, stdout: '', stderr: '' }
+    }
+    await pushBranch(exec, '/repo')
+    // A remote may configure a separate pushurl; probing the fetch URL would
+    // validate a host the push never talks to.
+    const probe = argvs.find(args => args[0] === 'ls-remote')
+    expect(probe).toEqual(['ls-remote', '--heads', 'https://push.example/r.git'])
+    const probeAt = argvs.findIndex(args => args[0] === 'ls-remote')
+    const pushAt = argvs.findIndex(args => args[0] === 'push')
+    expect(probeAt).toBeGreaterThanOrEqual(0)
+    expect(probeAt).toBeLessThan(pushAt)
+  })
+
+  it('fails on the probe instead of attempting the push when the host is unreachable', async () => {
+    // The scripted executor throws on an unexpected call, so a push after the
+    // failed probe would fail the test on its own.
     const exec = scripted([
       { args: ['rev-parse', '@{u}'], out: { stdout: 'abc\n' } },
+      { args: ['branch', '--show-current'], out: { stdout: 'main\n' } },
+      { args: ['rev-parse', 'HEAD'], out: { stdout: 'abc\n' } },
+      { args: ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], out: { stdout: 'origin/main\n' } },
+      { args: ['remote', 'get-url', '--push', 'origin'], out: { stdout: 'https://github.com/o/r.git\n' } },
+      { args: ['ls-remote', '--heads', 'https://github.com/o/r.git'], out: { code: 128, stderr: 'fatal: unable to access: Recv failure: Connection was reset\n' } },
+    ])
+    await expect(pushBranch(exec, '/repo')).rejects.toThrow('Connection was reset')
+  })
+
+  it('reports a timed-out push that landed, instead of an error', async () => {
+    // A killed push carries no verdict: the remote may have applied it. One
+    // ls-remote settles it, and a match means the push succeeded.
+    const exec = scripted([
+      { args: ['rev-parse', '@{u}'], out: { stdout: 'abc\n' } },
+      { args: ['branch', '--show-current'], out: { stdout: 'main\n' } },
+      { args: ['rev-parse', 'HEAD'], out: { stdout: 'abc\n' } },
+      { args: ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], out: { stdout: 'origin/main\n' } },
+      { args: ['remote', 'get-url', '--push', 'origin'], out: { stdout: 'https://github.com/o/r.git\n' } },
+      { args: ['ls-remote', '--heads', 'https://github.com/o/r.git'], out: { stdout: '' } },
+      { args: ['push'], out: { code: 1, timedOut: true, errorMessage: 'Command failed: git push' } },
+      { args: ['ls-remote', '--refs', 'https://github.com/o/r.git', 'refs/heads/main'], out: { stdout: 'abc\trefs/heads/main\n' } },
+    ])
+    expect(await pushBranch(exec, '/repo')).toEqual({ branch: 'main', pushed: true, note: 'timed-out-but-landed' })
+  })
+
+  it('still reports a timed-out push whose remote ref did not move', async () => {
+    const exec = scripted([
+      { args: ['rev-parse', '@{u}'], out: { stdout: 'abc\n' } },
+      { args: ['branch', '--show-current'], out: { stdout: 'main\n' } },
+      { args: ['rev-parse', 'HEAD'], out: { stdout: 'abc\n' } },
+      { args: ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], out: { stdout: 'origin/main\n' } },
+      { args: ['remote', 'get-url', '--push', 'origin'], out: { stdout: 'https://github.com/o/r.git\n' } },
+      { args: ['ls-remote', '--heads', 'https://github.com/o/r.git'], out: { stdout: '' } },
+      { args: ['push'], out: { code: 1, timedOut: true, errorMessage: 'Command failed: git push' } },
+      { args: ['ls-remote', '--refs', 'https://github.com/o/r.git', 'refs/heads/main'], out: { stdout: 'def\trefs/heads/main\n' } },
+    ])
+    await expect(pushBranch(exec, '/repo')).rejects.toThrow('Command failed: git push')
+  })
+
+  it('uses the process error when a failed command has no output', async () => {
+    const exec = scripted([
+      { args: ['rev-parse', '@{u}'], out: { code: 128, stderr: 'fatal: no upstream configured\n' } },
       { args: ['push'], out: { code: 1, errorMessage: 'spawn git ENOENT' } },
     ])
     await expect(pushBranch(exec, '/repo')).rejects.toThrow('spawn git ENOENT')
   })
 
-  it('gives the push the wide network budget, not the local default', async () => {
+  it('gives the push its wide budget and the probe the short one', async () => {
     // A slow-link push outruns the local 20s default, and a killed push may
-    // have already updated the remote refs — the error toast would fire for
-    // a push that actually landed.
-    const seen: Array<number | undefined> = []
+    // have already updated the remote refs; the probe exists to fail FAST,
+    // so it must never inherit the push budget.
+    const budgets: { call: string; timeoutMs?: number }[] = []
     const exec: Exec = async (_file, args, options) => {
-      seen.push(options.timeoutMs)
+      budgets.push({ call: args.join(' '), ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }) })
+      if (args[0] === 'remote') return { code: 0, stdout: 'https://github.com/o/r.git\n', stderr: '' }
+      if (args[0] === 'rev-parse' && args[1] === '--abbrev-ref') return { code: 0, stdout: 'origin/main\n', stderr: '' }
       return { code: 0, stdout: 'abc\n', stderr: '' }
     }
     await pushBranch(exec, '/repo')
-    const pushCall = seen[1]
-    expect(pushCall).toBe(NETWORK_TIMEOUT_MS)
-    // The @{u} probe stays on the local default.
-    expect(seen[0]).toBeUndefined()
+    const probe = budgets.find(item => item.call.startsWith('ls-remote'))
+    const push = budgets.find(item => item.call === 'push')
+    expect(push?.timeoutMs).toBe(PUSH_TIMEOUT_MS)
+    expect(probe?.timeoutMs).toBe(PROBE_TIMEOUT_MS)
+    // The local @{u} probe stays on the local default.
+    expect(budgets[0]?.timeoutMs).toBeUndefined()
   })
 
   it('never injects the mirror rewrite: pushes stay direct, even accelerated', async () => {
     // Public accelerators have no receive-pack, and rewriting the push would
     // hand the pushed content to a third party. The injection point does not
-    // exist on this path — assert the argv is bare.
+    // exist on this path — assert every argv stays bare.
     const argvs: string[][] = []
     const exec: Exec = async (_file, args) => {
       argvs.push([...args])
@@ -517,7 +587,24 @@ describe('pushBranch', () => {
     for (const args of argvs) {
       expect(args).not.toContain('-c')
     }
-    expect(argvs[1]).toEqual(['push'])
+    expect(argvs.find(args => args[0] === 'push')).toEqual(['push'])
+  })
+
+  it('routes the probe and the push through the same channel argv', async () => {
+    const argvs: string[][] = []
+    const exec: Exec = async (_file, args) => {
+      argvs.push([...args])
+      if (args[0] === 'remote') return { code: 0, stdout: 'https://github.com/o/r.git\n', stderr: '' }
+      if (args[0] === 'rev-parse' && args[1] === '--abbrev-ref') return { code: 0, stdout: 'origin/main\n', stderr: '' }
+      return { code: 0, stdout: 'abc\n', stderr: '' }
+    }
+    await pushBranch(exec, '/repo', [], { channelArgs: ['-c', 'http.proxy=http://127.0.0.1:7890'] })
+    const routed = argvs.filter(args => args.includes('-c'))
+    // Two -c pairs precede every subcommand, so the command sits at index 2.
+    expect(routed.map(args => args.slice(2)[0])).toEqual(['ls-remote', 'push'])
+    for (const args of routed) {
+      expect(args.slice(0, 2)).toEqual(['-c', 'http.proxy=http://127.0.0.1:7890'])
+    }
   })
 })
 
@@ -650,17 +737,17 @@ describe('pushTag', () => {
       .rejects.toThrow('already exists in the remote')
   })
 
-  it('gives both network calls the wide budget, not the local default', async () => {
-    const seen: Array<number | undefined> = []
+  it('gives the probe the short budget and the push the wide one', async () => {
+    const budgets: { call: string; timeoutMs?: number }[] = []
     const exec: Exec = async (_file, args, options) => {
-      seen.push(options.timeoutMs)
+      budgets.push({ call: args.join(' '), ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }) })
       if (args[0] === 'rev-parse') return { code: 0, stdout: 'aaaa\n', stderr: '' }
       return { code: 0, stdout: '', stderr: '' }
     }
     await pushTag(exec, '/repo', 'v1.0.6', 'origin')
-    expect(seen[0]).toBeUndefined()
-    expect(seen[1]).toBe(NETWORK_TIMEOUT_MS)
-    expect(seen[2]).toBe(NETWORK_TIMEOUT_MS)
+    expect(budgets[0]?.timeoutMs).toBeUndefined()
+    expect(budgets[1]?.timeoutMs).toBe(PROBE_TIMEOUT_MS)
+    expect(budgets[2]?.timeoutMs).toBe(PUSH_TIMEOUT_MS)
   })
 })
 
@@ -892,5 +979,87 @@ describe('appendWorktreeExclude', () => {
       mkdir: async () => {},
     }
     await expect(appendWorktreeExclude(seams, '/repo')).resolves.toContain('EACCES')
+  })
+})
+
+describe('network channel fallback', () => {
+  const PIN = ['-c', 'http.curloptResolve=github.com:443:140.82.114.3']
+
+  it('moves a write to the fallback channel only when the direct probe hit a reachability failure', async () => {
+    const exec = scripted([
+      { args: ['rev-parse', '@{u}'], out: { stdout: 'abc\n' } },
+      { args: ['branch', '--show-current'], out: { stdout: 'main\n' } },
+      { args: ['rev-parse', 'HEAD'], out: { stdout: 'abc\n' } },
+      { args: ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], out: { stdout: 'origin/main\n' } },
+      { args: ['remote', 'get-url', '--push', 'origin'], out: { stdout: 'https://github.com/o/r.git\n' } },
+      { args: ['ls-remote', '--heads', 'https://github.com/o/r.git'], out: { code: 128, stderr: 'fatal: unable to access: Recv failure: Connection was reset\n' } },
+      { args: PIN, out: { stdout: '' } },
+      { args: [...PIN, 'push'], out: { stdout: '' } },
+      { args: ['rev-parse', '@{u}'], out: { stdout: 'def\n' } },
+    ])
+    const asked: string[] = []
+    const outcome = await pushBranch(exec, '/repo', [], {
+      fallbackChannel: async endpoint => {
+        asked.push(endpoint)
+        return PIN
+      },
+    })
+    expect(asked).toEqual(['https://github.com/o/r.git'])
+    expect(outcome).toEqual({ branch: 'main', pushed: true })
+  })
+
+  it('never asks for another channel when the failure is about state, not reachability', async () => {
+    // A missing credential is not fixed by a different IP; asking would only
+    // replace a precise message with a second identical one.
+    const exec = scripted([
+      { args: ['rev-parse', '@{u}'], out: { stdout: 'abc\n' } },
+      { args: ['branch', '--show-current'], out: { stdout: 'main\n' } },
+      { args: ['rev-parse', 'HEAD'], out: { stdout: 'abc\n' } },
+      { args: ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], out: { stdout: 'origin/main\n' } },
+      { args: ['remote', 'get-url', '--push', 'origin'], out: { stdout: 'https://github.com/o/r.git\n' } },
+      { args: ['ls-remote', '--heads', 'https://github.com/o/r.git'], out: { code: 128, stderr: "fatal: could not read Username for 'https://github.com': terminal prompts disabled\n" } },
+    ])
+    const asked: string[] = []
+    await expect(pushBranch(exec, '/repo', [], {
+      fallbackChannel: async endpoint => {
+        asked.push(endpoint)
+        return PIN
+      },
+    })).rejects.toThrow('terminal prompts disabled')
+    expect(asked).toEqual([])
+  })
+
+  it('keeps the direct error when the fallback cannot reach the endpoint either', async () => {
+    const exec = scripted([
+      { args: ['rev-parse', '@{u}'], out: { stdout: 'abc\n' } },
+      { args: ['branch', '--show-current'], out: { stdout: 'main\n' } },
+      { args: ['rev-parse', 'HEAD'], out: { stdout: 'abc\n' } },
+      { args: ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], out: { stdout: 'origin/main\n' } },
+      { args: ['remote', 'get-url', '--push', 'origin'], out: { stdout: 'https://github.com/o/r.git\n' } },
+      { args: ['ls-remote', '--heads', 'https://github.com/o/r.git'], out: { code: 128, stderr: 'Connection was reset\n' } },
+      { args: PIN, out: { code: 128, stderr: 'Failed to connect\n' } },
+    ])
+    await expect(pushBranch(exec, '/repo', [], { fallbackChannel: async () => PIN }))
+      .rejects.toThrow('Failed to connect')
+  })
+
+  it('retries a failed fetch once on the fallback channel and nowhere else', async () => {
+    // Reading is idempotent; the retry cannot duplicate anything, and the
+    // second attempt still has to go through the same '-c' argv.
+    const exec = scripted([
+      { args: ['fetch', '--all', '--prune'], out: { code: 128, stderr: 'fatal: unable to access: Recv failure: Connection was reset\n' } },
+      { args: ['remote'], out: { stdout: 'origin\n' } },
+      { args: ['remote', 'get-url', 'origin'], out: { stdout: 'https://github.com/o/r.git\n' } },
+      { args: [...PIN, 'fetch', '--all', '--prune'], out: { stdout: '' } },
+    ])
+    await fetchAll(exec, '/repo', undefined, [], { fallbackChannel: async () => PIN })
+  })
+
+  it('does not retry a fetch that failed for a reason a channel cannot fix', async () => {
+    const exec = scripted([
+      { args: ['fetch', '--all', '--prune'], out: { code: 128, stderr: "fatal: could not read Username for 'https://github.com': terminal prompts disabled\n" } },
+    ])
+    await expect(fetchAll(exec, '/repo', undefined, [], { fallbackChannel: async () => PIN }))
+      .rejects.toThrow('terminal prompts disabled')
   })
 })

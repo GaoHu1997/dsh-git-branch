@@ -25,7 +25,8 @@ import {
   type GitCredential,
 } from './credentials.js'
 import type { CredentialService } from './credential-service.js'
-import { childProcessExec, NETWORK_TIMEOUT_MS, type Exec } from './git.js'
+import { childProcessExec, type Exec } from './git.js'
+import { FETCH_TIMEOUT_MS } from './network.js'
 
 /** Model-facing tool name. */
 export const GIT_NETWORK_TOOL_NAME = 'git_network'
@@ -294,7 +295,7 @@ export function gitNetworkTool(deps: GitNetworkToolDeps): GitNetworkTool {
       // the same token serves this command and a plain shell `git push`.
       const result = await exec('git', request.args, {
         cwd: request.repoPath,
-        timeoutMs: NETWORK_TIMEOUT_MS,
+        timeoutMs: FETCH_TIMEOUT_MS,
       })
       const stdout = cap(redactSecrets(result.stdout, entries))
       const stderrSource = result.stderr.trim() === '' && result.errorMessage !== undefined
