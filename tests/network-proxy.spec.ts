@@ -67,7 +67,7 @@ describe('parseProxyServer', () => {
 })
 
 describe('systemProxyUrl', () => {
-  it('reads an enabled proxy from the registry', async () => {
+  it.skipIf(process.platform !== 'win32')('reads an enabled proxy from the registry', async () => {
     const exec = regExec({
       enable: result({ stdout: '    ProxyEnable    REG_DWORD    0x1\n' }),
       server: result({ stdout: '    ProxyServer    REG_SZ    127.0.0.1:7890\n' }),
@@ -75,7 +75,17 @@ describe('systemProxyUrl', () => {
     expect(await systemProxyUrl(exec, '.')).toBe('http://127.0.0.1:7890')
   })
 
-  it('answers undefined when the switch is off, the read fails, or the value is unusable', async () => {
+  it.skipIf(process.platform === 'win32')('answers undefined off Windows without touching the registry', async () => {
+    let called = false
+    const exec: Exec = async () => {
+      called = true
+      return result({ stdout: '    ProxyEnable    REG_DWORD    0x1\n    ProxyServer    REG_SZ    127.0.0.1:7890\n' })
+    }
+    expect(await systemProxyUrl(exec, '.')).toBeUndefined()
+    expect(called).toBe(false)
+  })
+
+  it.skipIf(process.platform !== 'win32')('answers undefined when the switch is off, the read fails, or the value is unusable', async () => {
     expect(await systemProxyUrl(regExec({ enable: result({ stdout: '    ProxyEnable    REG_DWORD    0x0\n' }) }), '.')).toBeUndefined()
     expect(await systemProxyUrl(regExec({ enable: result({ code: 1, stderr: 'not found' }) }), '.')).toBeUndefined()
     expect(await systemProxyUrl(regExec({
@@ -84,7 +94,7 @@ describe('systemProxyUrl', () => {
     }), '.')).toBeUndefined()
   })
 
-  it('never invokes reg with anything but a read', async () => {
+  it.skipIf(process.platform !== 'win32')('never invokes reg with anything but a read', async () => {
     const seen: string[][] = []
     const exec: Exec = async (_file, args) => {
       seen.push([...args])

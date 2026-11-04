@@ -61,4 +61,5 @@
 - [0042 — 直连失败时按 IP 优选换路（运行时 DoH、并发竞速）](0042-ip-optimized-fallback-channel.md)
 - [0043 — 代理成为第三通道：显式 networkProxy、只读系统代理探测、通道链与 /network-probe](0043-explicit-proxy-channel-and-probe.md)
 - [0044 — 镜像退为读加速：失败即回直连，SSH 远端显式提示](0044-mirror-as-read-accelerator-and-ssh-hint.md)
-- [0045 — 发布 v1.3.0 次版本](0045-release-v1.3.0.md)- [0045 — 发布 v1.3.0 次版本](0045-release-v1.3.0.md)- [0045 — 发布 v1.3.0 次版本](0045-release-v1.3.0.md)- [0045 — 发布 v1.3.0 次版本](0045-release-v1.3.0.md)
+- [0045 — 发布 v1.3.0 次版本](0045-release-v1.3.0.md)
+- [0046 — 系统代理用例按平台分派，CI 与 release 恢复绿灯](0046-platform-aware-system-proxy-test.md)
