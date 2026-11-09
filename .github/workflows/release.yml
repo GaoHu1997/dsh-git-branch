@@ -71,6 +71,31 @@ jobs:
             exit 1
           fi
 
+      # The plugin market renders the GitHub Release body verbatim; a
+      # --generate-notes body on a repo that pushes straight to main is one
+      # compare link. Refuse to publish a version whose hand-written body is
+      # missing or thin, so an empty changelog can never reach the market.
+      - name: Verify release notes
+        run: |
+          set -euo pipefail
+          notes=".github/releases/${GITHUB_REF_NAME}.md"
+          if [ ! -f "$notes" ]; then
+            echo "::error::$notes is missing — every tag needs a committed release body (see AGENTS.md)"
+            exit 1
+          fi
+          bytes="$(wc -c < "$notes" | tr -d ' ')"
+          lines="$(grep -c . "$notes" || true)"
+          sections="$(grep -c '^## ' "$notes" || true)"
+          echo "$notes: ${bytes} bytes, ${lines} non-empty lines, ${sections} sections"
+          if [ "$bytes" -lt 300 ] || [ "$lines" -lt 8 ] || [ "$sections" -lt 1 ]; then
+            echo "::error::$notes is too thin — need >=300 bytes, >=8 non-empty lines and >=1 '## ' section"
+            exit 1
+          fi
+          if ! grep -q 'Full Changelog' "$notes"; then
+            echo "::error::$notes has no '**Full Changelog**' line"
+            exit 1
+          fi
+
       # Verification deliberately runs before `pnpm publish` even though
       # prepublishOnly repeats it: a named failing step is easier to read than
       # a publish that dies mid-lifecycle.
@@ -137,13 +162,16 @@ jobs:
           if [ "${{ steps.meta.outputs.prerelease }}" = "true" ]; then
             prerelease_flag="--prerelease"
           fi
+          notes=".github/releases/${tag}.md"
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" artifacts/*.tgz --clobber
+            # A re-run must not leave stale generated notes behind.
+            gh release edit "$tag" --notes-file "$notes"
           else
             gh release create "$tag" artifacts/*.tgz \
               --title "$tag" \
               --verify-tag \
-              --generate-notes \
+              --notes-file "$notes" \
               $prerelease_flag
           fi
           # `gh release upload` prints nothing on success, and a pre-existing release

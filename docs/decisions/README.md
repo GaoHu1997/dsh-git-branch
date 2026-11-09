@@ -63,3 +63,4 @@
 - [0044 — 镜像退为读加速：失败即回直连，SSH 远端显式提示](0044-mirror-as-read-accelerator-and-ssh-hint.md)
 - [0045 — 发布 v1.3.0 次版本](0045-release-v1.3.0.md)
 - [0046 — 系统代理用例按平台分派，CI 与 release 恢复绿灯](0046-platform-aware-system-proxy-test.md)
+- [0047 — 发布正文随仓库提交，发布前校验](0047-release-notes-must-be-committed.md)
