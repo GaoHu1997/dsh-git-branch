@@ -52,12 +52,13 @@
  * a fact-spelling confirm (uncommitted count, ahead commits, sessions to
  * be archived — the branch itself survives; a directory holding a running
  * session withholds the verb). On the main checkout's BLANK session the
- * group doubles as
- * the only way to reach a branch held by a worktree — those have left the
- * local group (git refuses to check them out twice, so a local-group row
- * would be a dead end). A linked-worktree session keeps that group and
- * gains the main checkout row (see {@link buildLinkedWorktreeRows}); a
- * started MAIN-checkout session drops the group — its directory is fixed.
+ * group is also the direct hop into a branch held by another worktree —
+ * that branch now ALSO keeps its local-group row (it is the user's branch
+ * and hiding it read as missing), while the hop row is the way to open a
+ * session already on it without touching the checkout. A linked-worktree
+ * session keeps that group and gains the main checkout row (see
+ * {@link buildLinkedWorktreeRows}); a started MAIN-checkout session drops
+ * the group — its directory is fixed.
  */
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
@@ -163,11 +164,13 @@ function displayBranch(branch: string): string {
 
 /**
  * Build the branch rows for the picker on the MAIN checkout, in three
- * kinds: LOCAL branches not held by a linked worktree, REMOTE branches,
- * and one WORKTREE row per linked worktree. A branch held by a worktree
- * LEAVES the local group — git refuses to check it out twice, so the row
- * would be a dead end; the worktree group is the way INTO it instead (a
- * direct session hop, see the owner's onAdoptWorktree).
+ * kinds: EVERY local branch, REMOTE branches, and one WORKTREE row per
+ * linked worktree. A local branch held by another worktree STAYS in the
+ * local group: hiding it made the picker look like branches had gone
+ * missing. It is still listed as a worktree row too (the direct session
+ * hop, see the owner's onAdoptWorktree) — the local row keeps the branch
+ * visible and named; checking it out in place stays git's call, which
+ * refuses a branch already checked out elsewhere.
  *
  * The worktree group is "every worktree EXCEPT the one this session sits
  * in" — here that is the main checkout itself (the session IS the main
@@ -186,10 +189,9 @@ export function buildBranchRows(
   branches: readonly BranchEntry[],
   worktrees: readonly WorktreeEntry[],
 ): BranchRow[] {
-  const held = new Set(worktrees.flatMap(w => w.main || w.branch === undefined ? [] : [w.branch]))
   const localMap = new Map(branches.filter(b => b.kind === 'local').map(b => [b.name, b]))
   return [
-    ...branches.filter(b => b.kind === 'local' && !held.has(b.name)).map(b => ({
+    ...branches.filter(b => b.kind === 'local').map(b => ({
       name: b.name,
       kind: 'local' as const,
       ...b.ahead === undefined ? {} : { ahead: b.ahead },

@@ -208,9 +208,20 @@ describe('buildBranchRows', () => {
       kind: 'local',
       ahead: 5,
     })
-    // Branches held by linked worktrees leave the local group:
-    expect(rows.find(r => r.kind === 'local' && r.name === 'feat/wt-1')).toBeUndefined()
-    expect(rows.find(r => r.kind === 'local' && r.name === 'feat/wt-sync')).toBeUndefined()
+    // Branches held by linked worktrees STAY in the local group (hiding them
+    // read as missing branches), keeping their upstream counts:
+    expect(rows.find(r => r.kind === 'local' && r.name === 'feat/wt-1')).toEqual({
+      name: 'feat/wt-1',
+      kind: 'local',
+      ahead: 2,
+      behind: 1,
+    })
+    expect(rows.find(r => r.kind === 'local' && r.name === 'feat/wt-sync')).toEqual({
+      name: 'feat/wt-sync',
+      kind: 'local',
+    })
+    // …and they still get their worktree (hop) row:
+    expect(rows.filter(r => r.name === 'feat/wt-1').map(r => r.kind)).toEqual(['local', 'worktree'])
 
     // Remote branches:
     expect(rows.find(r => r.name === 'origin/feat/remote')).toEqual({
