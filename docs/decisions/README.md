@@ -66,3 +66,4 @@
 - [0047 — 发布正文随仓库提交，发布前校验](0047-release-notes-must-be-committed.md)
 - [0048 — 会话框分支菜单如实显示被工作树占用的本地分支](0048-branch-menu-shows-worktree-held-branches.md)
 - [0049 — 发布 v1.3.1 补丁版本](0049-release-v1.3.1.md)
+- [0050 — 分支 chip 改用 workingDirectory 投影取当前目录](0050-branch-chip-uses-working-directory-projection.md)

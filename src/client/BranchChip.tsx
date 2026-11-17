@@ -143,6 +143,30 @@ function useRepoStatus(cwd: string | undefined): readonly [StatusState, () => Pr
   return [state, load]
 }
 
+/**
+ * Pick the directory the chip inspects: the Session's CURRENT directory, not
+ * the one it started in.
+ *
+ * `headerCwd` mirrors the Session header, which is frozen at creation and never
+ * follows `working-directory/change`. After the `working_directory` tool moved a
+ * Session into a worktree, anything reading only the header kept naming the
+ * original checkout (`master`) and every branch action landed on the wrong
+ * checkout — refreshing never helped, because nothing in that path is stale.
+ * The `workingDirectory` projection is the host-owned effective directory and
+ * does follow the change; it is absent until a baseline or frame carries it, so
+ * the header value remains the fallback for a Session that never moved.
+ *
+ * @param projectedCwd - `workingDirectory` projection value, absent before any baseline.
+ * @param headerCwd - Session header directory, frozen at creation.
+ * @returns the directory to inspect, or `undefined` while both are unknown.
+ */
+export function resolveChipCwd(
+  projectedCwd: string | null | undefined,
+  headerCwd: string | undefined,
+): string | undefined {
+  return projectedCwd ?? headerCwd
+}
+
 /** Longest branch name shown on the chip before ellipsizing (chars, … included). */
 const BRANCH_DISPLAY_MAX = 25
 
@@ -426,10 +450,10 @@ function ChipConfirm({
 }
 
 /** The tool-row entry registered into conversation.input.left. */
-export function BranchChipDock({ sessionId, useSessions, useSession, adoptWorktree, describeWorktreeRemoval, removeWorktree, pruneWorktrees, t }: BranchChipDockProps) {
+export function BranchChipDock({ sessionId, useSessions, useSession, useProjection, adoptWorktree, describeWorktreeRemoval, removeWorktree, pruneWorktrees, t }: BranchChipDockProps) {
   const summary = useSessions(state => state.byId[sessionId])
   const session = useSession(s => s)
-  const cwd = summary?.cwd
+  const cwd = resolveChipCwd(useProjection('workingDirectory'), summary?.cwd)
   const [repo, refresh] = useRepoStatus(cwd)
   const [menuOpen, setMenuOpen] = useState(false)
   const [confirm, setConfirm] = useState<ConfirmState | null>(null)
